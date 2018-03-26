@@ -264,7 +264,7 @@ void DestroyShadowPass(ShadowPass* sp)	{
 
 static const char* DefaultPassVertexShader[] = {
     "uniform mat4 u_biasedShadowMvpMatrix;\n"   // (*) Actually it's already multiplied with vMatrixInverse (in C code, so that the multiplication can be easily done with doubles)
-    "uniform vec2 u_shadowBiasAndDarkening;\n" // .x = bias (e.g.01) .y = darkening min value clamp [0.0-1.0]
+    "uniform vec2 u_shadowBiasAndDarkening;\n" // .x = bias (e.g. 0.01) .y = darkening min value clamp [0.0-1.0]
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
     "\n"
@@ -287,7 +287,7 @@ static const char* DefaultPassVertexShader[] = {
 static const char* DefaultPassFragmentShader[] = {
     "#define TABSSQRT "XSTR_MACRO(SHADOW_MAP_PCF_NUM_TAPS_SQRT)"\n"
     "uniform sampler2DShadow u_shadowMap;\n"
-    "uniform vec2 u_shadowBiasAndDarkening;\n" // .x = bias (e.g.01) .y = darkening min value clamp [0.0-1.0]
+    "uniform vec2 u_shadowBiasAndDarkening;\n" // .x = bias (e.g. 0.01) .y = darkening min value clamp [0.0-1.0]
     "uniform vec2 u_texelIncrements;\n"        // used only with extra taps
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
@@ -308,9 +308,10 @@ static const char* DefaultPassFragmentShader[] = {
     "   const float endVal = edgeVal+0.5;\n"    // we use +0.5 and < instead of <= in the for loop (more robust)
 #       endif
     "   float x,y;\n;"
+    "   float biasedShadowCoordinateZ = shadowCoordinateWdivide.z-u_shadowBiasAndDarkening.x;\n;"
     "   for (y=startVal; y<endVal; y+=1.0)   {\n"
     "       for (x=startVal; x<endVal; x+=1.0)   {\n"
-    "           shadowFactor += shadow2D(u_shadowMap,vec3(shadowCoordinateWdivide.st+vec2(x*u_texelIncrements.x/*/v_shadowCoord.w*/,y*u_texelIncrements.y/*/v_shadowCoord.w*/),shadowCoordinateWdivide.z-u_shadowBiasAndDarkening.x));\n"
+    "           shadowFactor += shadow2D(u_shadowMap,vec3(shadowCoordinateWdivide.st+vec2(x*u_texelIncrements.x,y*u_texelIncrements.y),biasedShadowCoordinateZ));\n"
     "       }\n"
     "   }\n"
     "   shadowFactor/=float(TABSSQRT*TABSSQRT);\n"
@@ -338,7 +339,7 @@ void InitDefaultPass(DefaultPass* dp)	{
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
-    glUniform2f(dp->uniform_location_shadowBiasAndDarkening,0.0085,0.45);	// Default values are (0.2f,0.75f). The second value must be in [0-1]
+    glUniform2f(dp->uniform_location_shadowBiasAndDarkening,0.0/*085*/,0.45);	// Default values are (0.01f,0.75f). The second value must be in [0-1]. If you use glPolyfonOffset(...) in DrawGL(), you can set the first one (the bias) to zero.
     glUniform2f(dp->uniform_location_texelIncrements,1.f/(float)SHADOW_MAP_RESOLUTION,1.f/(float)SHADOW_MAP_RESOLUTION);
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, 1 /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
 	glUseProgram(0);
@@ -455,16 +456,16 @@ void DrawGL(void)
         glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
         glClear(GL_DEPTH_BUFFER_BIT);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        glCullFace(GL_FRONT);               // Well, if objects are open, maybe glPolygonOffset(...) is better (with adjusted values)
-        //glEnable(GL_POLYGON_OFFSET_FILL);glPolygonOffset(2.0f, 2.0f);
+        //glCullFace(GL_FRONT);               // Well, if objects are open (like the Teapot mesh), maybe glPolygonOffset(...) is better (with adjusted values)
+        glEnable(GL_POLYGON_OFFSET_FILL);glPolygonOffset(-2.0f, -2.0f);
         glEnable(GL_DEPTH_CLAMP);
         glUseProgram(shadowPass.fbo);            // we can just use glUseProgram(0) here
         glPushMatrix();glLoadMatrixf(lvpMatrix); // we load both (light) projection and view matrices here (it's the same after all)
         Helper_GlutDrawGeometry(elapsedMs,cosAlpha,sinAlpha,targetPos,pgDisplayListBase);  // Done SHADOW_MAP_NUM_CASCADES times!
         glPopMatrix();
         glUseProgram(0);
-        glDisable(GL_DEPTH_CLAMP);
-        //glDisable(GL_POLYGON_OFFSET_FILL);
+        //glDisable(GL_DEPTH_CLAMP);
+        glDisable(GL_POLYGON_OFFSET_FILL);
         glCullFace(GL_BACK);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glBindFramebuffer(GL_FRAMEBUFFER,0);

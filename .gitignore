@@ -61,7 +61,7 @@ shadow_mapping
 shadow_mapping_pcf
 shadow_mapping_cascade
 shadow_mapping_cascade_texture_array
-makefile
+Makefile
 
 # Other Stuff
 **/reps/

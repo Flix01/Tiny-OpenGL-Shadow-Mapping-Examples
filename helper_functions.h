@@ -19,7 +19,6 @@
 
 #ifndef HELPER_FUNCTIONS_H_
 #define HELPER_FUNCTIONS_H_
-
 #include <math.h>
 #include <stdio.h>	// printf
 
