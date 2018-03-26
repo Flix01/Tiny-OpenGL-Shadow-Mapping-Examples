@@ -41,7 +41,7 @@ The picture below is valid for every frustum field of view (fovx, fovy and fovd)
 <pre>
 θ = (fovd/2);   // half diagonal fov
 t = tan(θ);
-tSquared = (1.0+ar*ar)\*tan(0.5*fovy)\*tan(0.5*fovy); // ar = camera aspect ratio
+tSquared = (1.0+ar*ar)*tan(0.5*fovy)*tan(0.5*fovy); // ar = camera aspect ratio
 h = 0.5*(f+n) ;  // half way between near and far plane
 d = h*(1.0+tSquared);   // Found after all the math passages from the picture above
 if (d>f) d=f;           // Clamping to save some shadow resolution
