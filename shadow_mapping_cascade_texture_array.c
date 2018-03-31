@@ -509,7 +509,7 @@ void DrawGL(void)
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         glCullFace(GL_FRONT);
         glEnable(GL_DEPTH_CLAMP);
-        glUseProgram(shadowPass.fbo);
+        glUseProgram(shadowPass.program);
         for (i=0;i<SHADOW_MAP_NUM_CASCADES;i++) {
             glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, shadowPass.fbo, 0, i);
             glClear(GL_DEPTH_BUFFER_BIT);   // Clears all the shadow map layer

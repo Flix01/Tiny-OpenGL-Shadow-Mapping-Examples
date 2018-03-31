@@ -61,6 +61,13 @@ shadow_mapping
 shadow_mapping_pcf
 shadow_mapping_cascade
 shadow_mapping_cascade_texture_array
+variance_shadow_mapping
+variance_shadow_mapping_EVSM
+variance_shadow_mapping_EVSM2
+variance_shadow_mapping_EVSM4
+variance_shadow_mapping_MSM
+variance_shadow_mapping_MSM2
+variance_shadow_mapping_MSM4
 Makefile
 
 # Other Stuff

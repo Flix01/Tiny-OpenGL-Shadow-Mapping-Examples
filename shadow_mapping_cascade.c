@@ -466,7 +466,7 @@ void DrawGL(void)
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         glCullFace(GL_FRONT);
         glEnable(GL_DEPTH_CLAMP);
-        glUseProgram(shadowPass.fbo);
+        glUseProgram(shadowPass.program);
         for (i=0;i<SHADOW_MAP_NUM_CASCADES;i++) {
             glViewport(SHADOW_MAP_HEIGHT*i, 0, SHADOW_MAP_HEIGHT,SHADOW_MAP_HEIGHT);
             glPushMatrix();glLoadMatrixf(&lvpMatrices[i*16]); // we load both (light) projection and view matrices here (it's the same after all)

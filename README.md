@@ -17,6 +17,7 @@ Compact OpenGL Shadow Mapping Examples in a single compilation unit.
 
 ## How to compile
 Compilation instructions are at the top of each .c file.
+All the demos have been tested on Linux using an NVIDIA graphic card.
 
 
 ## Screenshots
@@ -24,12 +25,12 @@ Compilation instructions are at the top of each .c file.
 ![shadow_mapping_cascade.c](./screenshots/shadow_mapping_cascade.png)
 ![shadow_mapping_cascade_texture_array.c](./screenshots/shadow_mapping_cascade_texture_array.png)
 ![shadow_mapping_pcf.c](./screenshots/shadow_mapping_pcf.png)
-
+![variance_shadow_mapping.c](./screenshots/variance_shadow_mapping.png)
 
 ## Implmentation
 All the examples in this repository implement "Stable Shadow Mapping".
 That means that static shadows should not flicker when the camera moves or rotates, at the expense of the shadow resolution, that is usually only a half of the resolution that can be used in any "Non-Stable Shadow Mapping" technique.
-In addition, the light matrices calculated by the "Stable Shadow Mapping" algorithm are not optimized for frustum culling usage.
+In addition, the light matrices calculated by the "Stable Shadow Mapping" algorithm are not optimal for frustum culling usage, and if we want to filter the shadow map (like in VSM), we waste a lot of resources (unless we manage to calculate a tighter texture viewport somehow).
 
 The "Stable Shadow Mapping" algorithm calculates the minimum sphere that encloses the camera frustum, and further encloses it in a light ortho projection matrix.
 
@@ -60,7 +61,11 @@ r = sqrt((tSquared*f*f) + (f-d)*(f-d));
 
 [GPU Gems 3 - Chapter 10. Parallel-Split Shadow Maps on Programmable GPUs](https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch10.html)
 
+[variance_shadow_mapping.c is greatly based on this Fabien Sanglard's work](http://fabiensanglard.net/shadowmappingVSM/)
 
+[glsl-fast-gaussian-blur: my blur filters are based on this Github repository](https://github.com/Jam3/glsl-fast-gaussian-blur/)
+
+[Github repository containing Direct3D implementations of many modern shadow mapping techniques](https://github.com/TheRealMJP/Shadows)
 
 
 

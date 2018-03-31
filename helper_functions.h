@@ -473,6 +473,8 @@ static __inline void Helper_GetLightViewProjectionMatrix(hloat* __restrict lvpMa
     //fprintf(stderr,"radius=%1.5f frustumCenter={%1.5f,%1.5f,%1.5f}\n",radius,frustumCenter[0],frustumCenter[1],frustumCenter[2]);
 }
 
+
+
 static __inline  void Helper_GetCascadeFarPlaneArray(hloat*  __restrict cascadeFarPlanesArrayOut,int numCascades,hloat lambda,hloat cameraNearClippingPlane,hloat cameraFarClippingPlane) {
     int i;
     for (i=0;i<numCascades;i++) {

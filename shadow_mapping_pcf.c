@@ -46,7 +46,7 @@ for glut.h, glew.h, etc. with something like:
 #define PROGRAM_NAME "shadow_mapping_pcf"
 #define VISUALIZE_DEPTH_TEXTURE
 #define SHADOW_MAP_RESOLUTION 1024 //1024
-#define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR with a sampler2DShadow has a free 4-taps pcf on NVIDIA and recent AMD graphic cards)
+#define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR with a sampler2DShadow has a free 2x2-taps pcf on NVIDIA and recent AMD graphic cards)
 #define SHADOW_MAP_PCF_NUM_TAPS_SQRT 4    // (e.g: 1x1 (no extra taps), 2x2, 3x3, 4x4, 5x5, 6x6, 7x7,...)
 #define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE // GL_CLAMP or GL_CLAMP_TO_EDGE or GL_CLAMP_TO_BORDER
     //          GL_CLAMP;               // sampling outside of the shadow map gives always shadowed pixels
@@ -205,7 +205,7 @@ static const char* ShadowPassVertexShader[] = {
 };
 static const char* ShadowPassFragmentShader[] = {
     "   void main() {\n"
-    "       gl_FragColor =  gl_Color;\n"
+    "       //gl_FragColor =  gl_Color;\n"
     "   }\n"
 };
 typedef struct {
@@ -279,9 +279,7 @@ static const char* DefaultPassVertexShader[] = {
 	"\n"	
     "	gl_FrontColor = gl_Color;\n"
 	"\n"
-    "   vec4 offsetVertex = (gl_ModelViewMatrix*gl_Vertex);\n"
-    "   offsetVertex.xyz+= (normal*u_shadowBiasAndDarkening.x)*2.0;\n"  // Here we apply a normal bias to solve shadow acne problems
-    "   v_shadowCoord = u_biasedShadowMvpMatrix*offsetVertex;\n"  // (*) We don't pass a 'naked' mMatrix in shaders (not robust to double precision usage). We dress it in a mvMatrix. So here we're passing a mMatrix from camera space to light space (through a mvMatrix).
+    "   v_shadowCoord = u_biasedShadowMvpMatrix*(gl_ModelViewMatrix*gl_Vertex);\n"  // (*) We don't pass a 'naked' mMatrix in shaders (not robust to double precision usage). We dress it in a mvMatrix. So here we're passing a mMatrix from camera space to light space (through a mvMatrix).
     "}\n"                                                                           // (the bias just converts clip space to texture space)
 };
 static const char* DefaultPassFragmentShader[] = {
@@ -459,14 +457,14 @@ void DrawGL(void)
         //glCullFace(GL_FRONT);               // Well, if objects are open (like the Teapot mesh), maybe glPolygonOffset(...) is better (with adjusted values)
         glEnable(GL_POLYGON_OFFSET_FILL);glPolygonOffset(-2.0f, -2.0f);
         glEnable(GL_DEPTH_CLAMP);
-        glUseProgram(shadowPass.fbo);            // we can just use glUseProgram(0) here
+        glUseProgram(shadowPass.program);            // we can just use glUseProgram(0) here
         glPushMatrix();glLoadMatrixf(lvpMatrix); // we load both (light) projection and view matrices here (it's the same after all)
         Helper_GlutDrawGeometry(elapsedMs,cosAlpha,sinAlpha,targetPos,pgDisplayListBase);  // Done SHADOW_MAP_NUM_CASCADES times!
         glPopMatrix();
         glUseProgram(0);
-        //glDisable(GL_DEPTH_CLAMP);
+        glDisable(GL_DEPTH_CLAMP);
         glDisable(GL_POLYGON_OFFSET_FILL);
-        glCullFace(GL_BACK);
+        //glCullFace(GL_BACK);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glBindFramebuffer(GL_FRAMEBUFFER,0);
         glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
