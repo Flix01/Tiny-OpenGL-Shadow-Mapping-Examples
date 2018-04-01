@@ -29,9 +29,9 @@
 // HOW TO COMPILE:
 /*
 // LINUX:
-gcc -O2 -std=gnu89 shadow_mapping.c -o shadow_mapping -I"../" -lglut -lGL -lX11 -lm
+gcc -O2 -std=gnu89 variance_shadow_mapping_EVSM4.c -o variance_shadow_mapping_EVSM4 -I"../" -lglut -lGL -lX11 -lm
 // WINDOWS (here we use the static version of glew, and glut32.lib, that can be replaced by freeglut.lib):
-cl /O2 /MT /Tc shadow_mapping.c /D"GLEW_STATIC" /I"../" /link /out:shadow_mapping.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
+cl /O2 /MT /Tc variance_shadow_mapping_EVSM4.c /D"GLEW_STATIC" /I"../" /link /out:variance_shadow_mapping_EVSM4.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
 
 
 // IN ADDITION:
@@ -59,7 +59,7 @@ for glut.h, glew.h, etc. with something like:
 
 // Please leave at least one decimal
 // Values must be positive and less than:
-// 42.0f (32bit texture precision) or 5.54f (16bit texture precision)
+// 42.0f (32bit texture precision) or 5.54f (16bit texture precision) [https://github.com/TheRealMJP/Shadows]
 // Usually 30.0 and 10.0 are good for 32bit
 #define SHADOW_MAP_EXPONENTIAL_POSITIVE_COEFFICIENT 10.0
 #define SHADOW_MAP_EXPONENTIAL_NEGATIVE_COEFFICIENT 10.0
@@ -396,7 +396,7 @@ void InitDefaultPass(DefaultPass* dp)	{
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
-    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.00,0.5); // Both values in [0.0-1.0]
+    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.0,0.5); // Both values in [0.0-1.0]
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, 1 /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
 	glUseProgram(0);
 }
@@ -409,9 +409,11 @@ void DestroyDefaultPass(DefaultPass* dp)	{
 // Mostly adapted from the Github repository: https://github.com/Jam3/glsl-fast-gaussian-blur/ (MIT license)
 // Probably to be optimized a bit... Also there's no penumbra. Why ?
 static const char* BlurPassVertexShader[] = {
+    "varying vec2 v_uv;\n"
     "\n"
     "void main()	{\n"
     "	gl_Position = gl_Vertex;\n"
+    "   v_uv = gl_MultiTexCoord0.xy;\n"
     "}\n"
 };
 static const char* BlurPassFragmentShader[] = {
@@ -419,6 +421,8 @@ static const char* BlurPassFragmentShader[] = {
     "uniform vec2 u_resolution;\n"      // Maybe using the C macro would be faser
     "uniform sampler2D u_sampler;\n"
     "uniform vec2 u_direction;\n"
+    "\n"
+    "varying vec2 v_uv;\n"
     "\n"
 #   ifndef SHADOW_MAP_BLUR_USING_BOX_FILTER
 #   if SHADOW_MAP_BLUR_KERNEL_SIZE==3
@@ -488,8 +492,7 @@ static const char* BlurPassFragmentShader[] = {
     "   }\n"
 #   endif //SHADOW_MAP_BLUR_USING_BOX_FILTER
     "void main() {\n"
-    "   vec2 uv = vec2(gl_FragCoord.xy/u_resolution.xy);\n"  // in [0,1] or in [-1,1] ? (because we can remove gl_FragCoord)
-    "   gl_FragColor = blur(u_sampler,uv,u_resolution.xy,u_direction);"
+    "   gl_FragColor = blur(u_sampler,v_uv,u_resolution.xy,u_direction);"
     "}\n"
 };
 typedef struct {
@@ -785,7 +788,7 @@ void DrawGL(void)
 		glDisable(GL_LIGHTING);
         glEnable(GL_BLEND);
         glBindTexture(GL_TEXTURE_2D,shadowPass.colorTextureId);
-        glColor4f(1,1,1,1);
+        glColor4f(1,1,1,0.9f);
         glBegin(GL_QUADS);
         glTexCoord2f(0,0);glVertex2f(-1,    -1);
         glTexCoord2f(1,0);glVertex2f(-0.25*current_aspect_ratio, -1);

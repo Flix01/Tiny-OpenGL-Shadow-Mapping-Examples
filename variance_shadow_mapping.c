@@ -28,9 +28,9 @@
 // HOW TO COMPILE:
 /*
 // LINUX:
-gcc -O2 -std=gnu89 shadow_mapping.c -o shadow_mapping -I"../" -lglut -lGL -lX11 -lm
+gcc -O2 -std=gnu89 variance_shadow_mapping.c -o variance_shadow_mapping -I"../" -lglut -lGL -lX11 -lm
 // WINDOWS (here we use the static version of glew, and glut32.lib, that can be replaced by freeglut.lib):
-cl /O2 /MT /Tc shadow_mapping.c /D"GLEW_STATIC" /I"../" /link /out:shadow_mapping.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
+cl /O2 /MT /Tc variance_shadow_mapping.c /D"GLEW_STATIC" /I"../" /link /out:variance_shadow_mapping.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
 
 
 // IN ADDITION:
@@ -386,9 +386,11 @@ void DestroyDefaultPass(DefaultPass* dp)	{
 // Mostly adapted from the Github repository: https://github.com/Jam3/glsl-fast-gaussian-blur/ (MIT license)
 // Probably to be optimized a bit... Also there's no penumbra. Why ?
 static const char* BlurPassVertexShader[] = {
+    "varying vec2 v_uv;\n"
     "\n"
     "void main()	{\n"
     "	gl_Position = gl_Vertex;\n"
+    "   v_uv = gl_MultiTexCoord0.xy;\n"
     "}\n"
 };
 static const char* BlurPassFragmentShader[] = {
@@ -396,6 +398,8 @@ static const char* BlurPassFragmentShader[] = {
     "uniform vec2 u_resolution;\n"      // Maybe using the C macro would be faster
     "uniform sampler2D u_sampler;\n"
     "uniform vec2 u_direction;\n"
+    "\n"
+    "varying vec2 v_uv;\n"
     "\n"
 #   ifndef SHADOW_MAP_BLUR_USING_BOX_FILTER
 #   if SHADOW_MAP_BLUR_KERNEL_SIZE==3
@@ -465,8 +469,7 @@ static const char* BlurPassFragmentShader[] = {
     "   }\n"
 #   endif //SHADOW_MAP_BLUR_USING_BOX_FILTER
     "void main() {\n"
-    "   vec2 uv = vec2(gl_FragCoord.xy/u_resolution.xy);\n"  // in [0,1] or in [-1,1] ? (because we can remove gl_FragCoord)
-    "   gl_FragColor = vec4(blur(u_sampler,uv,u_resolution.xy,u_direction),0.0,0.0);"
+    "   gl_FragColor = vec4(blur(u_sampler,v_uv,u_resolution.xy,u_direction),0.0,0.0);"
     "}\n"
 };
 typedef struct {
