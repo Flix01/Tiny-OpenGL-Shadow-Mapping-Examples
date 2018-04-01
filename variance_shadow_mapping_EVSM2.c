@@ -1,5 +1,6 @@
 // https://github.com/Flix01/Tiny-OpenGL-Shadow-Mapping-Examples
 // This demo is greatly based on http://fabiensanglard.net/shadowmappingVSM/
+// and on https://github.com/TheRealMJP/Shadows (MIT Licensed) [basically I didn't know know to sample the shadow map]
 // Blur filters are based on https://github.com/Jam3/glsl-fast-gaussian-blur/ (MIT licensed)
 /** License
  *
@@ -28,9 +29,9 @@
 // HOW TO COMPILE:
 /*
 // LINUX:
-gcc -O2 -std=gnu89 variance_shadow_mapping.c -o variance_shadow_mapping -I"../" -lglut -lGL -lX11 -lm
+gcc -O2 -std=gnu89 variance_shadow_mapping_EVSM2.c -o variance_shadow_mapping_EVSM2 -I"../" -lglut -lGL -lX11 -lm
 // WINDOWS (here we use the static version of glew, and glut32.lib, that can be replaced by freeglut.lib):
-cl /O2 /MT /Tc variance_shadow_mapping.c /D"GLEW_STATIC" /I"../" /link /out:variance_shadow_mapping.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
+cl /O2 /MT /Tc variance_shadow_mapping_EVSM2.c /D"GLEW_STATIC" /I"../" /link /out:variance_shadow_mapping_EVSM2.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
 
 
 // IN ADDITION:
@@ -45,16 +46,22 @@ for glut.h, glew.h, etc. with something like:
 //#define USE_GLEW  // By default it's only defined for Windows builds (but can be defined in Linux/Mac builds too)
 
 
-#define PROGRAM_NAME "variance_shadow_mapping"
-#define VISUALIZE_DEPTH_TEXTURE
+#define PROGRAM_NAME "variance_shadow_mapping_EVSM2"
+//#define VISUALIZE_DEPTH_TEXTURE   // Hey! It's all yellow here!
 #define SHADOW_MAP_RESOLUTION 1024 //1024
 #define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE // GL_CLAMP or GL_CLAMP_TO_EDGE or GL_CLAMP_TO_BORDER
     //          GL_CLAMP;               // sampling outside of the shadow map gives always shadowed pixels
     //          GL_CLAMP_TO_EDGE;       // sampling outside of the shadow map can give shadowed or unshadowed pixels (it depends on the edge of the shadow map)
     //          GL_CLAMP_TO_BORDER;     // sampling outside of the shadow map gives always non-shadowed pixels (if we set the border color correctly)
-#define SHADOW_MAP_FILTER GL_LINEAR_MIPMAP_LINEAR     // GL_LINEAR_MIPMAP_LINEAR or GL_LINEAR
+#define SHADOW_MAP_FILTER GL_LINEAR     // GL_LINEAR_MIPMAP_LINEAR or GL_LINEAR
 //#define SHADOW_MAP_BLUR_USING_BOX_FILTER    // Optional [Not sure code is correct]
 #define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
+
+// Please leave at least one decimal
+// Value must be positive and less than:
+// 42.0f (32bit texture precision) or 5.54f (16bit texture precision) [https://github.com/TheRealMJP/Shadows]
+#define SHADOW_MAP_EXPONENTIAL_COEFFICIENT 10.0
+
 
 // These path definitions can be passed to the compiler command-line
 #ifndef GLUT_PATH
@@ -212,6 +219,8 @@ static const char* ShadowPassVertexShader[] = {
     "   }\n"
 };
 static const char* ShadowPassFragmentShader[] = {   // From http://fabiensanglard.net/shadowmappingVSM/index.php
+    "#define POS_COEFF "XSTR_MACRO(SHADOW_MAP_EXPONENTIAL_COEFFICIENT)"\n"
+    "\n"
     "varying vec4 v_position;\n"
     "\n"
     "   void main() {\n"
@@ -226,7 +235,7 @@ static const char* ShadowPassFragmentShader[] = {   // From http://fabiensanglar
     "       float dy = dFdy(depth);\n"
     "       moment2 += 0.25*(dx*dx+dy*dy);\n"
     "\n"
-    "       gl_FragColor = vec4(moment1,moment2, 0.0, 0.0 );\n"
+    "       gl_FragColor = vec4(exp(POS_COEFF*moment1),exp(POS_COEFF*moment2), 0.0,0.0);\n"
     "   }\n"
 };
 typedef struct {
@@ -327,26 +336,35 @@ static const char* DefaultPassVertexShader[] = {
     "}\n"                                                                           // (the bias just converts clip space to texture space)
 };
 static const char* DefaultPassFragmentShader[] = {
+    "#define POS_COEFF "XSTR_MACRO(SHADOW_MAP_EXPONENTIAL_COEFFICIENT)"\n"
+    "\n"
     "uniform sampler2D u_shadowMap;\n"
     "uniform vec2 u_shadowLightBleedingReductionAndDarkening;\n" // Both values in [0.0-1.0]
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
-    "\n"
+    "\n" // Please see https://github.com/TheRealMJP/Shadows:
     "float chebyshevUpperBound(vec2 texCoord,float distance) {\n"
+    "   // Rescale distance into [-1, 1]\n"
+    "   //float depth = 2.0 * distance - 1.0;\n"    // Nope, we've used u_BIASEDShadowMvpMatrix in the vertex shader
+    "   float depth = distance;\n"
+    "   float warpedDepth = exp(POS_COEFF*depth);\n"
     "   vec2 moments = texture2D(u_shadowMap,texCoord).rg;\n"
     "   // Surface is fully lit. as the current fragment is before the light occluder\n"
-    "   if (distance <= moments.x)  return 1.0;\n"  // Can we remove this branch ?
+    "   if (warpedDepth <= moments.x)  return 1.0;\n"  // Can we remove this branch ?
     "\n"
-    "   // The fragment is either in shadow or penumbra. "
+    "   // Derivative of warping at depth\n"
+    "   float depthScale = 0.01 * 0.01 * POS_COEFF * warpedDepth;\n" // Here VSMBias = 0.01, but can be adjusted
+    "   float minVariance = depthScale*depthScale;\n"    // depthScale is just used to calculate minVariance. Can't we just hard-code it like we did in VSM ?
+    "   // The fragment is either in shadow or penumbra.\n"
     "   // We now use chebyshev's upperBound to check\n"
     "   // How likely this pixel is to be lit (p_max)\n"
     "   float variance = moments.y - (moments.x*moments.x);\n"
-    "   variance = max(variance,0.00002);\n"    // Here we can specify the minimum variance
+    "   variance = max(variance,minVariance);\n"
     "\n"
-    "   float d = distance - moments.x;\n"
-    "   float p_max = variance / (variance + d*d);\n"   // 0<p_max<1
+    "   float d = warpedDepth - moments.x;\n"
+    "   float p_max = variance.x/(variance.x+d*d);\n"   // 0<p_max<1
     "\n"
-    "   return smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n"
+    "  return smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n" // https://github.com/TheRealMJP/Shadows applies this before taking the min(...). Is this the same ?
     "}\n"
     "\n"
     "void main() {\n"
@@ -373,7 +391,7 @@ void InitDefaultPass(DefaultPass* dp)	{
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
-    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.9,0.5);	// Both values in [0-1]
+    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.0,0.5); // Both values in [0.0-1.0]
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, 1 /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
 	glUseProgram(0);
 }
@@ -606,8 +624,8 @@ void DestroyGL() {
 
 
 
-void DrawGL(void) 
-{	
+void DrawGL(void)
+{
     // All the things about time are just used to display FPS (F2)
     // or to move objects around (NOT for shadow)
     static unsigned begin = 0;
@@ -633,8 +651,8 @@ void DrawGL(void)
 
 
     // view Matrix
-    Helper_LookAt(vMatrix,cameraPos[0],cameraPos[1],cameraPos[2],targetPos[0],targetPos[1],targetPos[2],0,1,0);    
-	glLoadMatrixf(vMatrix);
+    Helper_LookAt(vMatrix,cameraPos[0],cameraPos[1],cameraPos[2],targetPos[0],targetPos[1],targetPos[2],0,1,0);
+    glLoadMatrixf(vMatrix);
     glLightfv(GL_LIGHT0,GL_POSITION,lightDirection);    // Important: the ffp must recalculate internally lightDirectionEyeSpace based on vMatrix [=> every frame]
 
     // view Matrix inverse (it's the camera matrix). Used twice below (and very important to keep in any case).
@@ -764,9 +782,9 @@ void DrawGL(void)
         glMatrixMode(GL_MODELVIEW);
         glPushMatrix();
         glLoadIdentity();
-	
-		glColor3f(1,1,1);
-		glDisable(GL_LIGHTING);
+
+        glColor3f(1,1,1);
+        glDisable(GL_LIGHTING);
         glEnable(GL_BLEND);
         glBindTexture(GL_TEXTURE_2D,shadowPass.colorTextureId);
         glColor4f(1,1,1,0.9f);
@@ -778,7 +796,7 @@ void DrawGL(void)
         glEnd();
         glBindTexture(GL_TEXTURE_2D,0);
         glDisable(GL_BLEND);
-		glEnable(GL_LIGHTING);
+        glEnable(GL_LIGHTING);
 
         glPopMatrix();
         glMatrixMode(GL_PROJECTION);

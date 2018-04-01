@@ -61,6 +61,8 @@ shadow_mapping
 shadow_mapping_pcf
 shadow_mapping_cascade
 shadow_mapping_cascade_texture_array
+shadow_mapping_SESM
+shadow_mapping_SESM1
 variance_shadow_mapping
 variance_shadow_mapping_EVSM
 variance_shadow_mapping_EVSM2

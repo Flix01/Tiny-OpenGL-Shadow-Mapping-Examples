@@ -1,5 +1,15 @@
 // https://github.com/Flix01/Tiny-OpenGL-Shadow-Mapping-Examples
-// This demo is greatly based on http://fabiensanglard.net/shadowmappingVSM/
+
+// This demo SESM1 (Smooth Exponential Shadow Map 1 channel) uses a one channel COLOR texture
+// as shadow map. (Actually a GL_RG32F format, because the GL_R32F format gives me a FBO status error on my card).
+// The advantage in COLOR textures is that they can be blurred by shaders (and they can use mipmaps).
+
+// Variance shadow mapping is 2x slow, because it uses 2 channels (but since I could not use
+// the GL_R32F format the memory usage is the same).
+
+// Very few people mention this configuration, that can be faster than variance shadow mapping
+// (although variance shadow mapping looks better).
+
 // Blur filters are based on https://github.com/Jam3/glsl-fast-gaussian-blur/ (MIT licensed)
 /** License
  *
@@ -28,9 +38,9 @@
 // HOW TO COMPILE:
 /*
 // LINUX:
-gcc -O2 -std=gnu89 variance_shadow_mapping.c -o variance_shadow_mapping -I"../" -lglut -lGL -lX11 -lm
+gcc -O2 -std=gnu89 shadow_mapping_SESM1.c -o shadow_mapping_SESM1 -I"../" -lglut -lGL -lX11 -lm
 // WINDOWS (here we use the static version of glew, and glut32.lib, that can be replaced by freeglut.lib):
-cl /O2 /MT /Tc variance_shadow_mapping.c /D"GLEW_STATIC" /I"../" /link /out:variance_shadow_mapping.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
+cl /O2 /MT /Tc shadow_mapping_SESM1.c /D"GLEW_STATIC" /I"../" /link /out:shadow_mapping_SESM1.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
 
 
 // IN ADDITION:
@@ -45,16 +55,27 @@ for glut.h, glew.h, etc. with something like:
 //#define USE_GLEW  // By default it's only defined for Windows builds (but can be defined in Linux/Mac builds too)
 
 
-#define PROGRAM_NAME "variance_shadow_mapping"
-#define VISUALIZE_DEPTH_TEXTURE
+#define PROGRAM_NAME "shadow_mapping_SESM1"
+//#define VISUALIZE_DEPTH_TEXTURE   // Hey! It does not work here!
 #define SHADOW_MAP_RESOLUTION 1024 //1024
 #define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE // GL_CLAMP or GL_CLAMP_TO_EDGE or GL_CLAMP_TO_BORDER
     //          GL_CLAMP;               // sampling outside of the shadow map gives always shadowed pixels
     //          GL_CLAMP_TO_EDGE;       // sampling outside of the shadow map can give shadowed or unshadowed pixels (it depends on the edge of the shadow map)
     //          GL_CLAMP_TO_BORDER;     // sampling outside of the shadow map gives always non-shadowed pixels (if we set the border color correctly)
-#define SHADOW_MAP_FILTER GL_LINEAR_MIPMAP_LINEAR     // GL_LINEAR_MIPMAP_LINEAR or GL_LINEAR
+#define SHADOW_MAP_FILTER GL_LINEAR     // GL_LINEAR_MIPMAP_LINEAR or GL_LINEAR
 //#define SHADOW_MAP_BLUR_USING_BOX_FILTER    // Optional [Not sure code is correct]
 #define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
+
+// Please leave at least one decimal! (the definition is used as a float value)
+// Value must be positive and less than same value for floating precision issues
+// AFAIR, https://github.com/TheRealMJP/Shadows states that for EVSM2 the limits are
+// 42.0f (32bit texture precision) or 5.54f (16bit texture precision) [Here we use 32bit precision]
+// But here we save only the first moment. So I guess we can set it to 80.0 without any problem
+#define SHADOW_MAP_EXPONENTIAL_COEFFICIENT 42.0
+// Too low values produce a kind of light-bleeding artifact at the bottom of the shadows,
+// that can be adjusted a bit with the uniform: u_shadowLightBleedingReductionAndDarkening.x
+// in the default shader pass (see below).
+
 
 // These path definitions can be passed to the compiler command-line
 #ifndef GLUT_PATH
@@ -212,21 +233,15 @@ static const char* ShadowPassVertexShader[] = {
     "   }\n"
 };
 static const char* ShadowPassFragmentShader[] = {   // From http://fabiensanglard.net/shadowmappingVSM/index.php
+    "#define POS_COEFF "XSTR_MACRO(SHADOW_MAP_EXPONENTIAL_COEFFICIENT)"\n"
+    "\n"
     "varying vec4 v_position;\n"
     "\n"
     "   void main() {\n"
     "       float depth = v_position.z/v_position.w;\n"
     "       depth = depth * 0.5 + 0.5;			//Don't forget to move away from unit cube ([-1,1]) to [0,1] coordinate system\n"
     "\n"
-    "       float moment1 = depth;\n"
-    "       float moment2 = depth * depth;\n"
-    "\n"
-    "       // Adjusting moments (this is sort of bias per pixel) using derivative\n"
-    "       float dx = dFdx(depth);\n"
-    "       float dy = dFdy(depth);\n"
-    "       moment2 += 0.25*(dx*dx+dy*dy);\n"
-    "\n"
-    "       gl_FragColor = vec4(moment1,moment2, 0.0, 0.0 );\n"
+    "       gl_FragColor = vec4(exp(POS_COEFF*depth),0.0,0.0,0.0);\n"
     "   }\n"
 };
 typedef struct {
@@ -327,31 +342,18 @@ static const char* DefaultPassVertexShader[] = {
     "}\n"                                                                           // (the bias just converts clip space to texture space)
 };
 static const char* DefaultPassFragmentShader[] = {
+    "#define POS_COEFF "XSTR_MACRO(SHADOW_MAP_EXPONENTIAL_COEFFICIENT)"\n"
+    "\n"
     "uniform sampler2D u_shadowMap;\n"
     "uniform vec2 u_shadowLightBleedingReductionAndDarkening;\n" // Both values in [0.0-1.0]
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
     "\n"
-    "float chebyshevUpperBound(vec2 texCoord,float distance) {\n"
-    "   vec2 moments = texture2D(u_shadowMap,texCoord).rg;\n"
-    "   // Surface is fully lit. as the current fragment is before the light occluder\n"
-    "   if (distance <= moments.x)  return 1.0;\n"  // Can we remove this branch ?
-    "\n"
-    "   // The fragment is either in shadow or penumbra. "
-    "   // We now use chebyshev's upperBound to check\n"
-    "   // How likely this pixel is to be lit (p_max)\n"
-    "   float variance = moments.y - (moments.x*moments.x);\n"
-    "   variance = max(variance,0.00002);\n"    // Here we can specify the minimum variance
-    "\n"
-    "   float d = distance - moments.x;\n"
-    "   float p_max = variance / (variance + d*d);\n"   // 0<p_max<1
-    "\n"
-    "   return smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n"
-    "}\n"
-    "\n"
     "void main() {\n"
+    "	float shadowFactor = 1.0;\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
-    "   float shadowFactor = chebyshevUpperBound(shadowCoordinateWdivide.st,shadowCoordinateWdivide.z);\n"
+    "   shadowFactor = clamp(texture2D(u_shadowMap,(shadowCoordinateWdivide.st)).r * exp(-POS_COEFF*shadowCoordinateWdivide.z),0.0,1.0);\n"
+    "   shadowFactor = smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,shadowFactor);\n"
     "   shadowFactor = u_shadowLightBleedingReductionAndDarkening.y + (1.0-u_shadowLightBleedingReductionAndDarkening.y)*shadowFactor;\n"
     "   \n"
     "	gl_FragColor = gl_LightSource[0].ambient + (v_diffuse * vec4(gl_Color.rgb*shadowFactor,1.0));\n"
@@ -373,7 +375,7 @@ void InitDefaultPass(DefaultPass* dp)	{
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
-    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.9,0.5);	// Both values in [0-1]
+    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.95,0.575); // Both values in [0.0-1.0]
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, 1 /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
 	glUseProgram(0);
 }
@@ -403,50 +405,50 @@ static const char* BlurPassFragmentShader[] = {
     "\n"
 #   ifndef SHADOW_MAP_BLUR_USING_BOX_FILTER
 #   if SHADOW_MAP_BLUR_KERNEL_SIZE==3
-    "   vec2 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"  // Not in https://github.com/Jam3/glsl-fast-gaussian-blur/. [Not sure code is correct]
-    "       vec2 color = vec2(0.0);\n"
-    "       vec2 off1 = vec2(0.5) * direction / resolution;\n"
-    "       color += texture2D(image, uv + off1).rg * 0.5;\n"
-    "       color += texture2D(image, uv - off1).rg * 0.5;\n"
+    "   float blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"  // Not in https://github.com/Jam3/glsl-fast-gaussian-blur/. [Not sure code is correct]
+    "       float color = 0;\n"
+    "       float off1 = 0.5 * direction / resolution;\n"
+    "       color += texture2D(image, uv + off1).r * 0.5;\n"
+    "       color += texture2D(image, uv - off1).r * 0.5;\n"
     "       return color;\n"
     "   }\n"
     "\n"
 #   elif SHADOW_MAP_BLUR_KERNEL_SIZE==5
-    "   vec2 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
-    "       vec2 color = vec2(0.0);\n"
-    "       vec2 off1 = vec2(1.3333333333333333) * direction / resolution;\n"
-    "       color += texture2D(image, uv).rg * 0.29411764705882354;\n"
-    "       color += texture2D(image, uv + off1).rg * 0.35294117647058826;\n"
-    "       color += texture2D(image, uv - off1).rg * 0.35294117647058826;\n"
+    "   float blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
+    "       float color = 0;\n"
+    "       float off1 = 1.3333333333333333 * direction / resolution;\n"
+    "       color += texture2D(image, uv).r * 0.29411764705882354;\n"
+    "       color += texture2D(image, uv + off1).r * 0.35294117647058826;\n"
+    "       color += texture2D(image, uv - off1).r * 0.35294117647058826;\n"
     "       return color;\n"
     "   }\n"
     "\n"
 #   elif SHADOW_MAP_BLUR_KERNEL_SIZE==9
-    "   vec2 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
-    "       vec2 color = vec2(0.0);\n"
-    "       vec2 off1 = vec2(1.3846153846) * direction / resolution;\n"
-    "       vec2 off2 = vec2(3.2307692308) * direction / resolution;\n"
-    "       color += texture2D(image, uv).rg * 0.2270270270;\n"
-    "       color += texture2D(image, uv + off1).rg * 0.3162162162;\n"
-    "       color += texture2D(image, uv - off1).rg * 0.3162162162;\n"
-    "       color += texture2D(image, uv + off2).rg * 0.0702702703;\n"
-    "       color += texture2D(image, uv - off2).rg * 0.0702702703;\n"
+    "   float blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
+    "       float color = 0;\n"
+    "       float off1 = 1.3846153846 * direction / resolution;\n"
+    "       float off2 = 3.2307692308 * direction / resolution;\n"
+    "       color += texture2D(image, uv).r * 0.2270270270;\n"
+    "       color += texture2D(image, uv + off1).r * 0.3162162162;\n"
+    "       color += texture2D(image, uv - off1).r * 0.3162162162;\n"
+    "       color += texture2D(image, uv + off2).r * 0.0702702703;\n"
+    "       color += texture2D(image, uv - off2).r * 0.0702702703;\n"
     "       return color;\n"
     "   }\n"
     "\n"
 #   elif SHADOW_MAP_BLUR_KERNEL_SIZE==13
-    "   vec2 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
-    "       vec2 color = vec2(0.0);\n"
-    "       vec2 off1 = vec2(1.411764705882353) * direction / resolution;\n"
-    "       vec2 off2 = vec2(3.2941176470588234) * direction / resolution;\n"
-    "       vec2 off3 = vec2(5.176470588235294) * direction / resolution;\n"
-    "       color += texture2D(image, uv).rg * 0.1964825501511404;\n"
-    "       color += texture2D(image, uv + off1).rg * 0.2969069646728344;\n"
-    "       color += texture2D(image, uv - off1).rg * 0.2969069646728344;\n"
-    "       color += texture2D(image, uv + off2).rg * 0.09447039785044732;\n"
-    "       color += texture2D(image, uv - off2).rg * 0.09447039785044732;\n"
-    "       color += texture2D(image, uv + off3).rg * 0.010381362401148057;\n"
-    "       color += texture2D(image, uv - off3).rg * 0.010381362401148057;\n"
+    "   float blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
+    "       float color = 0;\n"
+    "       float off1 = 1.411764705882353 * direction / resolution;\n"
+    "       float off2 = 3.2941176470588234 * direction / resolution;\n"
+    "       float off3 = 5.176470588235294 * direction / resolution;\n"
+    "       color += texture2D(image, uv).r * 0.1964825501511404;\n"
+    "       color += texture2D(image, uv + off1).r * 0.2969069646728344;\n"
+    "       color += texture2D(image, uv - off1).r * 0.2969069646728344;\n"
+    "       color += texture2D(image, uv + off2).r * 0.09447039785044732;\n"
+    "       color += texture2D(image, uv - off2).r * 0.09447039785044732;\n"
+    "       color += texture2D(image, uv + off3).r * 0.010381362401148057;\n"
+    "       color += texture2D(image, uv - off3).r * 0.010381362401148057;\n"
     "       return color;\n"
     "   }\n"
     "\n"
@@ -454,22 +456,22 @@ static const char* BlurPassFragmentShader[] = {
 #   error SHADOW_MAP_BLUR_KERNEL_SIZE unsupported value
 #   endif // SHADOW_MAP_BLUR_KERNEL_SIZE
 #   else //SHADOW_MAP_BLUR_USING_BOX_FILTER
-    "   vec2 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"  // Made this myself [Not sure code is correct]
+    "   float blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"  // Made this myself [Not sure code is correct]
     "       const float edgeVal = 0.5+float((SHADOW_MAP_BLUR_KERNEL_SIZE/2-1));\n"
     "       const float startVal = -edgeVal;\n"
     "       const float endVal = edgeVal+0.5;\n"    // we use +0.5 and < instead of <= in the for loop (more robust)
     "       vec2 off = direction/resolution;\n"
     "       float x;\n"
-    "       vec2 color = vec2(0.0);\n"
+    "       float color = 0;\n"
     "       for (x=startVal;x<endVal;x+=1.0)    {\n"
-    "           color+=texture2D(image, uv+vec2(x*off.x,x*off.y)).rg;\n"
+    "           color+=texture2D(image, uv+vec2(x*off.x,x*off.y)).r;\n"
     "       }\n"
     "       color/=float(SHADOW_MAP_BLUR_KERNEL_SIZE-1);\n"
     "       return color;\n"
     "   }\n"
 #   endif //SHADOW_MAP_BLUR_USING_BOX_FILTER
     "void main() {\n"
-    "   gl_FragColor = vec4(blur(u_sampler,v_uv,u_resolution.xy,u_direction),0.0,0.0);"
+    "   gl_FragColor = vec4(blur(u_sampler,v_uv,u_resolution.xy,u_direction),0.0,0.0,0.0);"
     "}\n"
 };
 typedef struct {
@@ -606,8 +608,8 @@ void DestroyGL() {
 
 
 
-void DrawGL(void) 
-{	
+void DrawGL(void)
+{
     // All the things about time are just used to display FPS (F2)
     // or to move objects around (NOT for shadow)
     static unsigned begin = 0;
@@ -633,8 +635,8 @@ void DrawGL(void)
 
 
     // view Matrix
-    Helper_LookAt(vMatrix,cameraPos[0],cameraPos[1],cameraPos[2],targetPos[0],targetPos[1],targetPos[2],0,1,0);    
-	glLoadMatrixf(vMatrix);
+    Helper_LookAt(vMatrix,cameraPos[0],cameraPos[1],cameraPos[2],targetPos[0],targetPos[1],targetPos[2],0,1,0);
+    glLoadMatrixf(vMatrix);
     glLightfv(GL_LIGHT0,GL_POSITION,lightDirection);    // Important: the ffp must recalculate internally lightDirectionEyeSpace based on vMatrix [=> every frame]
 
     // view Matrix inverse (it's the camera matrix). Used twice below (and very important to keep in any case).
@@ -657,7 +659,7 @@ void DrawGL(void)
         glBindFramebuffer(GL_FRAMEBUFFER, shadowPass.fbo);
         glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
         glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        glColorMask(GL_TRUE, GL_TRUE, GL_FALSE, GL_FALSE);
+        glColorMask(GL_TRUE, GL_FALSE, GL_FALSE, GL_FALSE);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         //glCullFace(GL_FRONT);
         //glEnable(GL_POLYGON_OFFSET_FILL);glPolygonOffset(-2.0f, -2.0f);
@@ -685,7 +687,7 @@ void DrawGL(void)
         glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
         glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
         glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glDisable(GL_CULL_FACE);glDisable(GL_LIGHTING);
-        glColorMask(GL_TRUE, GL_TRUE, GL_FALSE, GL_FALSE);
+        glColorMask(GL_TRUE, GL_FALSE, GL_FALSE, GL_FALSE);
         glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
         glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 
@@ -764,9 +766,9 @@ void DrawGL(void)
         glMatrixMode(GL_MODELVIEW);
         glPushMatrix();
         glLoadIdentity();
-	
-		glColor3f(1,1,1);
-		glDisable(GL_LIGHTING);
+
+        glColor3f(1,1,1);
+        glDisable(GL_LIGHTING);
         glEnable(GL_BLEND);
         glBindTexture(GL_TEXTURE_2D,shadowPass.colorTextureId);
         glColor4f(1,1,1,0.9f);
@@ -778,7 +780,7 @@ void DrawGL(void)
         glEnd();
         glBindTexture(GL_TEXTURE_2D,0);
         glDisable(GL_BLEND);
-		glEnable(GL_LIGHTING);
+        glEnable(GL_LIGHTING);
 
         glPopMatrix();
         glMatrixMode(GL_PROJECTION);
