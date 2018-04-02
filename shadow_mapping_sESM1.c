@@ -1,6 +1,6 @@
 // https://github.com/Flix01/Tiny-OpenGL-Shadow-Mapping-Examples
 
-// This demo SESM1 (Smooth Exponential Shadow Map 1 channel) uses a one channel COLOR texture
+// This demo sESM1 (smooth Exponential Shadow Map 1 channel) uses a one channel COLOR texture
 // as shadow map. (Actually a GL_RG32F format, because the GL_R32F format gives me a FBO status error on my card).
 // The advantage in COLOR textures is that they can be blurred by shaders (and they can use mipmaps).
 
@@ -38,9 +38,9 @@
 // HOW TO COMPILE:
 /*
 // LINUX:
-gcc -O2 -std=gnu89 shadow_mapping_SESM1.c -o shadow_mapping_SESM1 -I"../" -lglut -lGL -lX11 -lm
+gcc -O2 -std=gnu89 shadow_mapping_sESM1.c -o shadow_mapping_sESM1 -I"../" -lglut -lGL -lX11 -lm
 // WINDOWS (here we use the static version of glew, and glut32.lib, that can be replaced by freeglut.lib):
-cl /O2 /MT /Tc shadow_mapping_SESM1.c /D"GLEW_STATIC" /I"../" /link /out:shadow_mapping_SESM1.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
+cl /O2 /MT /Tc shadow_mapping_sESM1.c /D"GLEW_STATIC" /I"../" /link /out:shadow_mapping_sESM1.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
 
 
 // IN ADDITION:
@@ -55,8 +55,8 @@ for glut.h, glew.h, etc. with something like:
 //#define USE_GLEW  // By default it's only defined for Windows builds (but can be defined in Linux/Mac builds too)
 
 
-#define PROGRAM_NAME "shadow_mapping_SESM1"
-//#define VISUALIZE_DEPTH_TEXTURE   // Hey! It does not work here!
+#define PROGRAM_NAME "shadow_mapping_sESM1"
+#define VISUALIZE_DEPTH_TEXTURE     // Hey! this works only when STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP below is NOT defined and... it's yellow and green!
 #define SHADOW_MAP_RESOLUTION 1024 //1024
 #define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE // GL_CLAMP or GL_CLAMP_TO_EDGE or GL_CLAMP_TO_BORDER
     //          GL_CLAMP;               // sampling outside of the shadow map gives always shadowed pixels
@@ -66,12 +66,10 @@ for glut.h, glew.h, etc. with something like:
 //#define SHADOW_MAP_BLUR_USING_BOX_FILTER    // Optional [Not sure code is correct]
 #define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
 
+//#define STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP // Actually it seems to work better with this line commented out!
 // Please leave at least one decimal! (the definition is used as a float value)
-// Value must be positive and less than same value for floating precision issues
-// AFAIR, https://github.com/TheRealMJP/Shadows states that for EVSM2 the limits are
-// 42.0f (32bit texture precision) or 5.54f (16bit texture precision) [Here we use 32bit precision]
-// But here we save only the first moment. So I guess we can set it to 80.0 without any problem
-#define SHADOW_MAP_EXPONENTIAL_COEFFICIENT 42.0
+// Value must be positive (and less than same value for floating precision issues)
+#define SHADOW_MAP_EXPONENTIAL_COEFFICIENT 45.0
 // Too low values produce a kind of light-bleeding artifact at the bottom of the shadows,
 // that can be adjusted a bit with the uniform: u_shadowLightBleedingReductionAndDarkening.x
 // in the default shader pass (see below).
@@ -241,7 +239,10 @@ static const char* ShadowPassFragmentShader[] = {   // From http://fabiensanglar
     "       float depth = v_position.z/v_position.w;\n"
     "       depth = depth * 0.5 + 0.5;			//Don't forget to move away from unit cube ([-1,1]) to [0,1] coordinate system\n"
     "\n"
-    "       gl_FragColor = vec4(exp(POS_COEFF*depth),0.0,0.0,0.0);\n"
+#   ifdef STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
+    "       depth = exp(POS_COEFF*depth);\n"
+#   endif //STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
+    "       gl_FragColor = vec4(depth,0.0,0.0,0.0);\n"
     "   }\n"
 };
 typedef struct {
@@ -314,6 +315,13 @@ void InitShadowPass(ShadowPass* sp)	{
         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         if (status!=GL_FRAMEBUFFER_COMPLETE) printf("glCheckFramebufferStatus(...) FAILED for shadowPass.fbo.\n");
     }
+#   ifdef VISUALIZE_DEPTH_TEXTURE
+    // Optional: clear fbo textures----------------------
+    glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    //---------------------------------------------------
+#   endif //VISUALIZE_DEPTH_TEXTURE
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 void DestroyShadowPass(ShadowPass* sp)	{
@@ -352,7 +360,11 @@ static const char* DefaultPassFragmentShader[] = {
     "void main() {\n"
     "	float shadowFactor = 1.0;\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
-    "   shadowFactor = clamp(texture2D(u_shadowMap,(shadowCoordinateWdivide.st)).r * exp(-POS_COEFF*shadowCoordinateWdivide.z),0.0,1.0);\n"
+#   ifdef STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
+"   shadowFactor = clamp(texture2D(u_shadowMap,(shadowCoordinateWdivide.st)).r * exp(-POS_COEFF*shadowCoordinateWdivide.z),0.0,1.0);\n"
+#   else //STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
+"   shadowFactor = clamp(exp(POS_COEFF*(texture2D(u_shadowMap,shadowCoordinateWdivide.st).r - shadowCoordinateWdivide.z)),0.0,1.0);\n"
+#   endif //STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
     "   shadowFactor = smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,shadowFactor);\n"
     "   shadowFactor = u_shadowLightBleedingReductionAndDarkening.y + (1.0-u_shadowLightBleedingReductionAndDarkening.y)*shadowFactor;\n"
     "   \n"
@@ -533,6 +545,13 @@ void InitBlurPass(BlurPass* bp)	{
         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         if (status!=GL_FRAMEBUFFER_COMPLETE) printf("glCheckFramebufferStatus(...) FAILED for blurPass.fbo.\n");
     }
+#   ifdef VISUALIZE_DEPTH_TEXTURE
+    // Optional: clear fbo textures----------------------
+    glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    //---------------------------------------------------
+#   endif //VISUALIZE_DEPTH_TEXTURE
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 void DestroyBlurPass(BlurPass* bp)	{
