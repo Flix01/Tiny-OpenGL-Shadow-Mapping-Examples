@@ -56,7 +56,7 @@ for glut.h, glew.h, etc. with something like:
 
 
 #define PROGRAM_NAME "shadow_mapping_sESM1"
-#define VISUALIZE_DEPTH_TEXTURE     // Hey! this works only when STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP below is NOT defined and... it's yellow and green!
+#define VISUALIZE_DEPTH_TEXTURE     // Hey! this works only when STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP below is NOT defined!
 #define SHADOW_MAP_RESOLUTION 1024 //1024
 #define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE // GL_CLAMP or GL_CLAMP_TO_EDGE or GL_CLAMP_TO_BORDER
     //          GL_CLAMP;               // sampling outside of the shadow map gives always shadowed pixels
@@ -318,7 +318,7 @@ void InitShadowPass(ShadowPass* sp)	{
 #   ifdef VISUALIZE_DEPTH_TEXTURE
     // Optional: clear fbo textures----------------------
     glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
-    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     //---------------------------------------------------
 #   endif //VISUALIZE_DEPTH_TEXTURE
@@ -360,6 +360,10 @@ static const char* DefaultPassFragmentShader[] = {
     "void main() {\n"
     "	float shadowFactor = 1.0;\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
+    "   // Here we have complicated things a bit,\n"
+    "   // but I think we can keep using the comparison used\n"
+    "   // in shadow_mapping.c (without u_shadowLightBleedingReductionAndDarkening.x),\n"
+    "   // to speed up things if we like...\n"
 #   ifdef STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
 "   shadowFactor = clamp(texture2D(u_shadowMap,(shadowCoordinateWdivide.st)).r * exp(-POS_COEFF*shadowCoordinateWdivide.z),0.0,1.0);\n"
 #   else //STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
@@ -548,7 +552,7 @@ void InitBlurPass(BlurPass* bp)	{
 #   ifdef VISUALIZE_DEPTH_TEXTURE
     // Optional: clear fbo textures----------------------
     glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
-    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     //---------------------------------------------------
 #   endif //VISUALIZE_DEPTH_TEXTURE
