@@ -19,6 +19,8 @@ Compact OpenGL Shadow Mapping Examples in a single compilation unit.
 Compilation instructions are at the top of each .c file.
 All the demos have been tested on Linux using an NVIDIA graphic card.
 
+## Help needed
+The demos: shadow_mapping_sESM1.c, variance_shadow_mapping.c, variance_shadow_mapping_EVSM2.c and variance_shadow_mapping_EVSM4.c are all **WRONG**! The shadows should look blurry and instead are sharp! If you can help to fix these (and other) issues, please post a message in the *"Issues"* or *"Pull requests"* sections. Thank you in advance!
 
 ## Screenshots
 ![shadow_mapping.c](./screenshots/shadow_mapping.png)
