@@ -55,6 +55,8 @@ for glut.h, glew.h, etc. with something like:
 #define SHADOW_MAP_FILTER GL_LINEAR_MIPMAP_LINEAR     // GL_LINEAR_MIPMAP_LINEAR or GL_LINEAR
 //#define SHADOW_MAP_BLUR_USING_BOX_FILTER    // Optional [Not sure code is correct]
 #define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
+//#define SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION    // Otherwise linear step is used (cheaper?)
+
 
 // These path definitions can be passed to the compiler command-line
 #ifndef GLUT_PATH
@@ -332,6 +334,10 @@ static const char* DefaultPassFragmentShader[] = {
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
     "\n"
+    "float linstep(float low, float high, float v)	{\n"
+    "	return clamp((v-low)/(high-low), 0.0, 1.0);\n"
+    "}\n"
+    "\n"
     "float chebyshevUpperBound(vec2 texCoord,float distance) {\n"
     "   vec2 moments = texture2D(u_shadowMap,texCoord).rg;\n"
     "   // Surface is fully lit. as the current fragment is before the light occluder\n"
@@ -346,7 +352,11 @@ static const char* DefaultPassFragmentShader[] = {
     "   float d = distance - moments.x;\n"
     "   float p_max = variance / (variance + d*d);\n"   // 0<p_max<1
     "\n"
+#   ifdef SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
     "   return smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n"
+#   else //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
+    "   return linstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n"
+#   endif //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
     "}\n"
     "\n"
     "void main() {\n"

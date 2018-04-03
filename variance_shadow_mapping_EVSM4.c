@@ -63,6 +63,7 @@ for glut.h, glew.h, etc. with something like:
 // Usually 30.0 and 10.0 are good for 32bit
 #define SHADOW_MAP_EXPONENTIAL_POSITIVE_COEFFICIENT 10.0
 #define SHADOW_MAP_EXPONENTIAL_NEGATIVE_COEFFICIENT 10.0
+//#define SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION    // Otherwise linear step is used (cheaper?)
 
 
 // These path definitions can be passed to the compiler command-line
@@ -346,6 +347,10 @@ static const char* DefaultPassFragmentShader[] = {
     "uniform vec2 u_shadowLightBleedingReductionAndDarkening;\n" // Both values in [0.0-1.0]
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
+    "\n"
+    "float linstep(float low, float high, float v)	{\n"
+    "	return clamp((v-low)/(high-low), 0.0, 1.0);\n"
+    "}\n"
     "\n" // Please see https://github.com/TheRealMJP/Shadows:
     "float chebyshevUpperBound(vec2 texCoord,float distance) {\n"
     "   // Rescale distance into [-1, 1]\n"
@@ -368,8 +373,12 @@ static const char* DefaultPassFragmentShader[] = {
     "   vec2 d = warpedDepths - moments.xz;\n"
     "   vec2 p_max = vec2(variance.x/(variance.x+d.x*d.x),variance.y/(variance.y+d.y*d.y));\n"   // 0<p_max<1
     "\n"
-    "  float p_max_min = min(p_max.x,p_max.y);\n"   // We can simply return this (we use u_shadowLightBleedingReductionAndDarkening.x = 0)
-    "  return smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max_min);\n" // https://github.com/TheRealMJP/Shadows applies this before taking the min(...). Is this the same ?
+    "  float p_max_min = min(p_max.x,p_max.y);\n"   // We can simply return this (we use u_shadowLightBleedingReductionAndDarkening.x = 0)    
+#   ifdef SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
+    "   return smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max_min);\n"   // https://github.com/TheRealMJP/Shadows applies this before taking the min(...). Is this the same ?
+#   else //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
+    "   return linstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max_min);\n"  // https://github.com/TheRealMJP/Shadows applies this before taking the min(...). Is this the same ?
+#   endif //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
     "}\n"
     "\n"
     "void main() {\n"

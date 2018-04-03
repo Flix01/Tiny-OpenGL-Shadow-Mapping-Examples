@@ -73,6 +73,7 @@ for glut.h, glew.h, etc. with something like:
 // Too low values produce a kind of light-bleeding artifact at the bottom of the shadows,
 // that can be adjusted a bit with the uniform: u_shadowLightBleedingReductionAndDarkening.x
 // in the default shader pass (see below).
+//#define SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION    // Otherwise linear step is used (cheaper?)
 
 
 // These path definitions can be passed to the compiler command-line
@@ -357,6 +358,10 @@ static const char* DefaultPassFragmentShader[] = {
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
     "\n"
+    "float linstep(float low, float high, float v)	{\n"
+    "	return clamp((v-low)/(high-low), 0.0, 1.0);\n"
+    "}\n"
+    "\n"
     "void main() {\n"
     "	float shadowFactor = 1.0;\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
@@ -369,7 +374,11 @@ static const char* DefaultPassFragmentShader[] = {
 #   else //STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
 "   shadowFactor = clamp(exp(POS_COEFF*(texture2D(u_shadowMap,shadowCoordinateWdivide.st).r - shadowCoordinateWdivide.z)),0.0,1.0);\n"
 #   endif //STORE_EXPONENTIAL_VALUE_IN_SHADOW_MAP
+#   ifdef SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
     "   shadowFactor = smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,shadowFactor);\n"
+#   else //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
+    "   shadowFactor = linstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,shadowFactor);\n"
+#   endif //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
     "   shadowFactor = u_shadowLightBleedingReductionAndDarkening.y + (1.0-u_shadowLightBleedingReductionAndDarkening.y)*shadowFactor;\n"
     "   \n"
     "	gl_FragColor = gl_LightSource[0].ambient + (v_diffuse * vec4(gl_Color.rgb*shadowFactor,1.0));\n"
