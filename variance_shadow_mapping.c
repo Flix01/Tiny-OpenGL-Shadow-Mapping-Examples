@@ -247,13 +247,13 @@ void InitShadowPass(ShadowPass* sp)	{
     glBindTexture(GL_TEXTURE_2D, sp->depthTextureId);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-#   ifndef __EMSCRIPTEN_
+#   ifndef __EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
-#   else //__EMSCRIPTEN_
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, rt->shadow_width, rt->shadow_texture_size, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, 0);
+#   else //__EMSCRIPTEN__
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, 0);
 #   undef SHADOW_MAP_CLAMP_MODE
 #   define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE
-#   endif //__EMSCRIPTEN_
+#   endif //__EMSCRIPTEN__
     if (SHADOW_MAP_CLAMP_MODE==GL_CLAMP_TO_BORDER)  {
         const GLfloat border[] = {1.0f,1.0f,1.0f,0.0f };
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
@@ -268,13 +268,13 @@ void InitShadowPass(ShadowPass* sp)	{
     glBindTexture(GL_TEXTURE_2D, sp->colorTextureId);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, SHADOW_MAP_FILTER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-#   ifndef __EMSCRIPTEN_
+#   ifndef __EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_RG32F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RG, GL_FLOAT, 0);
-#   else //__EMSCRIPTEN_
+#   else //__EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_RG16F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RG, GL_FLOAT, 0);
 #   undef SHADOW_MAP_CLAMP_MODE
 #   define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE
-#   endif //__EMSCRIPTEN_
+#   endif //__EMSCRIPTEN__
     if (SHADOW_MAP_CLAMP_MODE==GL_CLAMP_TO_BORDER)  {
         const GLfloat border[] = {1.0f,1.0f,1.0f,0.0f };
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
@@ -512,13 +512,13 @@ void InitBlurPass(BlurPass* bp)	{
     glBindTexture(GL_TEXTURE_2D, bp->textureId);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-#   ifndef __EMSCRIPTEN_
+#   ifndef __EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_RG32F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RG, GL_FLOAT, 0);
-#   else //__EMSCRIPTEN_
+#   else //__EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_RG16F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RG, GL_FLOAT, 0);
 #   undef SHADOW_MAP_CLAMP_MODE
 #   define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE
-#   endif //__EMSCRIPTEN_
+#   endif //__EMSCRIPTEN__
     if (SHADOW_MAP_CLAMP_MODE==GL_CLAMP_TO_BORDER)  {
         const GLfloat border[] = {1.0f,1.0f,1.0f,0.0f };
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);

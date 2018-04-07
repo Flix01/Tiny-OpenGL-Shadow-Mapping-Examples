@@ -57,12 +57,15 @@ for glut.h, glew.h, etc. with something like:
 #define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
 //#define SHADOW_MAP_USE_MSM_HAUSDORFF // If not defined MSM_HAMBURGER (the default MSM) is used
 
-//#define SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION    // Strictly mndatory for MSM4-16bit (might need a higher bias in dp->uniform_location_shadowDepthAndMomentBiases)
-//#define SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX   // Experimental (basically I don't know if this MUST be used or not... my ref code is https://github.com/TheRealMJP/Shadows and it's in Direct3D)
+//#define __EMSCRIPTEN__                                    // This is just a hack to use a MSM4-16bit texture format to save half of GPU memory (of course all these demos use the fixed function pipeline and can't work on emscripten as they are)
+                                                          // Also we need (and use) a higher bias in dp->uniform_location_shadowDepthAndMomentBiases, and some lightBleedingReduction too (but shadows look less blurry this way...).
+//#define SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION    // Strictly mandatory for MSM4-16bit (we will force this when __EMSCRIPTEN__ is defined), but can be used with  MSM4-32bit too (not sure something changes in the latter case)
+
 
 // Not sure if the following are better or not... I would not use them, so that shaders are more portable
 //#   define USE_GLSL_FMA
 //#   define USE_GLSL_TEXTUREGRAD
+
 
 
 // These path definitions can be passed to the compiler command-line
@@ -102,6 +105,13 @@ for glut.h, glew.h, etc. with something like:
 #if (SHADOW_MAP_BLUR_KERNEL_SIZE==(SHADOW_MAP_BLUR_KERNEL_SIZE/2)*2)
 #   error SHADOW_MAP_BLUR_KERNEL_SIZE must be an odd number
 #endif
+
+#define SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX   // Experimental (basically I don't know if this MUST be used or not... my ref code is https://github.com/TheRealMJP/Shadows and it's in Direct3D)
+                                                                        // However with 16 bit textures it definitely works better (so it's probably correct to leave it defined)
+#ifdef __EMSCRIPTEN__   // will use a MSM4-16bit texture
+#   undef SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+#   define SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION // Otherwise some artifacts (even if some uniforms are tweaked for 16-bit textures)
+#endif //__EMSCRIPTEN__
 
 #include "helper_functions.h"   // please search this .c file for "Helper_":
                                 // only very few of its functions are used.
@@ -269,13 +279,13 @@ void InitShadowPass(ShadowPass* sp)	{
     glBindTexture(GL_TEXTURE_2D, sp->depthTextureId);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-#   ifndef __EMSCRIPTEN_
+#   ifndef __EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
-#   else //__EMSCRIPTEN_
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, rt->shadow_width, rt->shadow_texture_size, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, 0);
+#   else //__EMSCRIPTEN__
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, 0);
 #   undef SHADOW_MAP_CLAMP_MODE
 #   define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE
-#   endif //__EMSCRIPTEN_
+#   endif //__EMSCRIPTEN__
     if (SHADOW_MAP_CLAMP_MODE==GL_CLAMP_TO_BORDER)  {
         const GLfloat border[] = {1.0f,1.0f,1.0f,0.0f };
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
@@ -290,13 +300,14 @@ void InitShadowPass(ShadowPass* sp)	{
     glBindTexture(GL_TEXTURE_2D, sp->colorTextureId);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, SHADOW_MAP_FILTER);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-#   ifndef __EMSCRIPTEN_
+#   ifndef __EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA32F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RGBA, GL_FLOAT, 0);
-#   else //__EMSCRIPTEN_
+#   else //__EMSCRIPTEN__
+    //glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16UI, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0,  GL_RGBA_INTEGER, GL_UNSIGNED_INT, 0);
     glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RGBA, GL_FLOAT, 0);
 #   undef SHADOW_MAP_CLAMP_MODE
 #   define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE
-#   endif //__EMSCRIPTEN_
+#   endif //__EMSCRIPTEN__
     if (SHADOW_MAP_CLAMP_MODE==GL_CLAMP_TO_BORDER)  {
         const GLfloat border[] = {1.0f,1.0f,1.0f,0.0f };
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
@@ -497,8 +508,13 @@ void InitDefaultPass(DefaultPass* dp)	{
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
+#   ifndef __EMSCRIPTEN__
     glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.0,0.5); // Both values in [0.0-1.0]
     glUniform2f(dp->uniform_location_shadowDepthAndMomentBiases,0.00005,0.0002);
+#   else //__EMSCRIPTEN__
+    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.65,0.5); // Both values in [0.0-1.0]
+    glUniform2f(dp->uniform_location_shadowDepthAndMomentBiases,0.5,1.0);
+#   endif //__EMSCRIPTEN__
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, 1 /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
 	glUseProgram(0);
 }
@@ -627,13 +643,14 @@ void InitBlurPass(BlurPass* bp)	{
     glBindTexture(GL_TEXTURE_2D, bp->textureId);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-#   ifndef __EMSCRIPTEN_
+#   ifndef __EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA32F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RGBA, GL_FLOAT, 0);
-#   else //__EMSCRIPTEN_
+#   else //__EMSCRIPTEN__
+    //glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16UI, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0,  GL_RGBA_INTEGER, GL_UNSIGNED_INT, 0);
     glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RGBA, GL_FLOAT, 0);
 #   undef SHADOW_MAP_CLAMP_MODE
 #   define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE
-#   endif //__EMSCRIPTEN_
+#   endif //__EMSCRIPTEN__
     if (SHADOW_MAP_CLAMP_MODE==GL_CLAMP_TO_BORDER)  {
         const GLfloat border[] = {1.0f,1.0f,1.0f,0.0f };
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
