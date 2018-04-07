@@ -57,6 +57,9 @@ for glut.h, glew.h, etc. with something like:
 #define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
 //#define SHADOW_MAP_USE_MSM_HAUSDORFF // If not defined MSM_HAMBURGER (the default MSM) is used
 
+//#define SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION    // Strictly mndatory for MSM4-16bit (might need a higher bias in dp->uniform_location_shadowDepthAndMomentBiases)
+//#define SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX   // Experimental (basically I don't know if this MUST be used or not... my ref code is https://github.com/TheRealMJP/Shadows and it's in Direct3D)
+
 // Not sure if the following are better or not... I would not use them, so that shaders are more portable
 //#   define USE_GLSL_FMA
 //#   define USE_GLSL_TEXTUREGRAD
@@ -222,7 +225,25 @@ static const char* ShadowPassFragmentShader[] = {
     "\n"
     "vec4 ComputeMoments(float FragmentDepth)    {\n"
     "   float Square=FragmentDepth*FragmentDepth;\n"
-    "   return vec4(FragmentDepth,Square,Square*FragmentDepth,Square*Square);\n"
+    "   vec4 mu = vec4(FragmentDepth,Square,Square*FragmentDepth,Square*Square);\n"
+#   ifndef SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+    "   return mu;\n"
+#   else //SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+#       ifdef SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX
+    "   const mat4 matr = mat4(-2.07224649,    13.7948857237,  0.105877704,   9.7924062118,\n"
+    "                 32.23703778,  -59.4683975703, -1.9077466311, -33.7652110555,\n"
+    "               -68.571074599,  82.0359750338,  9.3496555107,  47.9456096605,\n"
+    "               39.3703274134,-35.364903257,  -6.6543490743, -23.9728048165);\n"
+#       else //SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX
+    "   const mat4 matr = mat4(-2.07224649,    32.23703778,  -68.571074599,   39.3703274134,\n"
+    "                 13.7948857237,  -59.4683975703, 82.0359750338, -35.364903257,\n"
+    "               0.105877704,  -1.9077466311,  9.3496555107,  -6.6543490743,\n"
+    "               9.7924062118,-33.7652110555,  47.9456096605, -23.9728048165);\n"
+#       endif //SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX
+    "   vec4 mo = matr*mu;\n"
+    "   mo[0]+=0.0359558848;\n"
+    "   return mo;\n"
+#   endif //SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
     "}\n"
     "\n"
     "   void main() {\n"
@@ -418,14 +439,34 @@ static const char* DefaultPassFragmentShader[] = {
     "	return clamp((v-low)/(high-low), 0.0, 1.0);\n"
     "}\n"
     "\n"
+    "   vec4 ConvertMoments(vec4 optimizedMoments) {\n"
+#   ifndef SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+    "       return optimizedMoments;\n"
+#   else //SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+    "       optimizedMoments[0] -= 0.0359558848;\n"
+#       ifdef SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX
+    "   const mat4 matr = mat4(0.2227744146, 0.1549679261, 0.1451988946, 0.163127443,\n"
+    "                       0.0771972861, 0.1394629426, 0.2120202157, 0.2591432266,\n"
+    "                       0.7926986636,0.7963415838, 0.7258694464, 0.6539092497,\n"
+    "                       0.0319417555,-0.1722823173,-0.2758014811,-0.3376131734);\n"
+#       else //SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX
+    "   const mat4 matr = mat4(0.2227744146, 0.0771972861, 0.7926986636, 0.0319417555,\n"
+    "                       0.1549679261, 0.1394629426, 0.7963415838, -0.1722823173,\n"
+    "                       0.1451988946,0.2120202157,0.7258694464, -0.2758014811,\n"
+    "                       0.163127443,0.2591432266,0.6539092497,-0.3376131734);\n"
+#       endif //SHADOW_MAP_OPTIMIZED_MOMENT_QUANTIZATION_USE_TRANSPOSE_MATRIX
+    "   return matr*optimizedMoments;\n"
+#   endif //SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+    "}\n"
+    "\n"
     "void main() {\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
 #   ifdef USE_GLSL_TEXTUREGRAD // https://github.com/TheRealMJP/Shadows uses this... but I'm not sure if it's really necessary or not...
     "   vec3 shadowPosDX = dFdx(shadowCoordinateWdivide).xyz;\n"    // These seem to work even when they are vec2. What's the difference ?
     "   vec3 shadowPosDY = dFdy(shadowCoordinateWdivide).xyz;\n"
-    "   vec4 moments = textureGrad(u_shadowMap, shadowCoordinateWdivide.xy, shadowPosDX, shadowPosDY);\n"
+    "   vec4 moments = ConvertMoments(textureGrad(u_shadowMap, shadowCoordinateWdivide.xy, shadowPosDX, shadowPosDY));\n"
 #   else // USE_GLSL_TEXTUREGRAD
-    "   vec4 moments = texture2D(u_shadowMap, shadowCoordinateWdivide.xy);\n"
+    "   vec4 moments = ConvertMoments(texture2D(u_shadowMap, shadowCoordinateWdivide.xy));\n"
 #   endif //USE_GLSL_TEXTUREGRAD
     "   float shadowFactor = ComputeMSM(moments,shadowCoordinateWdivide.z,u_shadowDepthAndMomentBiases.x*0.001,u_shadowDepthAndMomentBiases.y*0.001);\n"
 #   ifdef SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
