@@ -55,7 +55,11 @@ for glut.h, glew.h, etc. with something like:
 #define SHADOW_MAP_FILTER GL_LINEAR     // GL_LINEAR_MIPMAP_LINEAR or GL_LINEAR
 //#define SHADOW_MAP_BLUR_USING_BOX_FILTER    // Optional [Not sure code is correct]
 #define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
+//#define SHADOW_MAP_USE_MSM_HAUSDORFF // If not defined MSM_HAMBURGER (the default MSM) is used
 
+// Not sure if the following are better or not... I would not use them, so that shaders are more portable
+//#   define USE_GLSL_FMA
+//#   define USE_GLSL_TEXTUREGRAD
 
 
 // These path definitions can be passed to the compiler command-line
@@ -326,7 +330,7 @@ static const char* DefaultPassVertexShader[] = {
     "}\n"                                                                           // (the bias just converts clip space to texture space)
 };
 static const char* DefaultPassFragmentShader[] = {
-    "#extension GL_ARB_derivative_control : enable\n"
+    "//#extension GL_ARB_gpu_shader5 : enable\n"               // fma needs it [but if breaks textureGrad(...) if USE_TEXTUREGRAD is defined) We keep the warning.
     "\n"
     "uniform sampler2D u_shadowMap;\n"
     "uniform vec2 u_shadowLightBleedingReductionAndDarkening;\n" // Both values in [0.0-1.0]
@@ -334,17 +338,25 @@ static const char* DefaultPassFragmentShader[] = {
     "\n"
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
+    "\n"
+    "float FMA(float a,float b,float c) {\n"
+#   ifdef USE_GLSL_FMA
+    "   return fma(a,b,c);\n"
+#   else //USE_GLSL_FMA
+    "   return a*b+c;\n"
+#   endif //USE_GLSL_FMA
+    "}\n"
     "\n" // Please see https://github.com/TheRealMJP/Shadows:
-    "float ComputeMSMHamburger(vec4 moments,float fragmentDepth,float depthBias,float momentBias)   {\n"
+    "float ComputeMSM(vec4 moments,float fragmentDepth,float depthBias,float momentBias)   {\n"
     "   // Bias input data to avoid artifacts\n"
     "   vec4 b = mix(moments,vec4(0.5, 0.5, 0.5, 0.5),momentBias);\n"
     "   vec3 z;z[0] = fragmentDepth - depthBias;\n"
     "   \n"
     "   // Compute a Cholesky factorization of the Hankel matrix B storing only non-\n"
     "   // trivial entries or related products\n"
-    "   float L32D22 = fma(-b[0], b[1], b[2]);\n"
-    "   float D22 = fma(-b[0], b[0], b[1]);\n"
-    "   float squaredDepthVariance = fma(-b[1], b[1], b[3]);\n"
+    "   float L32D22 = FMA(-b[0], b[1], b[2]);\n"
+    "   float D22 = FMA(-b[0], b[0], b[1]);\n"
+    "   float squaredDepthVariance = FMA(-b[1], b[1], b[3]);\n"
     "   float D33D22 = dot(vec2(squaredDepthVariance, -L32D22), vec2(D22, L32D22));\n"
     "   float InvD22 = 1.0 / D22;\n"
     "   float L32 = L32D22 * InvD22;\n"
@@ -373,12 +385,32 @@ static const char* DefaultPassFragmentShader[] = {
     "   z[1] =- p * 0.5 - r;\n"
     "   z[2] =- p * 0.5 + r;\n"
     "   \n"
+#   ifndef SHADOW_MAP_USE_MSM_HAUSDORFF // Hamburger here
     "   // Compute the shadow intensity by summing the appropriate weights\n"
     "   vec4 switchVal = (z[2] < z[0]) ? vec4(z[1], z[0], 1.0, 1.0) :\n"
     "                   ((z[1] < z[0]) ? vec4(z[0], z[1], 0.0, 1.0) :\n"
     "                   vec4(0.0,0.0,0.0,0.0));\n"
     "   float quotient = (switchVal[0] * z[2] - b[0] * (switchVal[0] + z[2]) + b[1])/((z[2] - switchVal[1]) * (z[0] - z[1]));\n"
     "   float shadowIntensity = switchVal[2] + switchVal[3] * quotient;\n"
+#   else // SHADOW_MAP_USE_MSM_HAUSDORFF // Hausdorff here
+    "   float shadowIntensity = 1.0;\n"
+    "   \n"
+    "   // Use a solution made of four deltas if the solution with three deltas is invalid\n"
+    "   if(z[1] < 0.0 || z[2] > 1.0)  {\n"
+    "       float zFree = ((b[2] - b[1]) * z[0] + b[2] - b[3]) / ((b[1] - b[0]) * z[0] + b[1] - b[2]);\n"
+    "       float w1Factor = (z[0] > zFree) ? 1.0 : 0.0;\n"
+    "       shadowIntensity = (b[1] - b[0] + (b[2] - b[0] - (zFree + 1.0) * (b[1] - b[0])) * (zFree - w1Factor - z[0])\n"
+    "                                                                   /(z[0] * (z[0] - zFree))) / (zFree - w1Factor) + 1.0 - b[0];\n"
+    "   }\n"
+    "   // Use the solution with three deltas\n"
+    "   else    {\n"
+    "       vec4 switchVal = (z[2] < z[0]) ? vec4(z[1], z[0], 1.0, 1.0) :\n"
+    "                       ((z[1] < z[0]) ? vec4(z[0], z[1], 0.0, 1.0) :\n"
+    "                       vec4(0.0, 0.0, 0.0, 0.0));\n"
+    "       float quotient = (switchVal[0] * z[2] - b[0] * (switchVal[0] + z[2]) + b[1]) / ((z[2] - switchVal[1]) * (z[0] - z[1]));\n"
+    "       shadowIntensity = switchVal[2] + switchVal[3] * quotient;\n"
+    "   }\n"
+#   endif //SHADOW_MAP_USE_MSM_HAUSDORFF
     "   return 1.0 - clamp(shadowIntensity,0.0,1.0);\n"
     "}\n"
     "\n"
@@ -388,10 +420,14 @@ static const char* DefaultPassFragmentShader[] = {
     "\n"
     "void main() {\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
-    "   vec3 shadowPosDX = dFdxFine(shadowCoordinateWdivide);\n"
-    "   vec3 shadowPosDY = dFdyFine(shadowCoordinateWdivide);\n"
-    "   vec4 moments = textureGrad(u_shadowMap, shadowCoordinateWdivide.xy, shadowPosDX.xy, shadowPosDY.xy);\n"
-    "   float shadowFactor = ComputeMSMHamburger(moments,shadowCoordinateWdivide.z,u_shadowDepthAndMomentBiases.x*0.001,u_shadowDepthAndMomentBiases.y*0.001);\n"
+#   ifdef USE_GLSL_TEXTUREGRAD // https://github.com/TheRealMJP/Shadows uses this... but I'm not sure if it's really necessary or not...
+    "   vec3 shadowPosDX = dFdx(shadowCoordinateWdivide).xyz;\n"    // These seem to work even when they are vec2. What's the difference ?
+    "   vec3 shadowPosDY = dFdy(shadowCoordinateWdivide).xyz;\n"
+    "   vec4 moments = textureGrad(u_shadowMap, shadowCoordinateWdivide.xy, shadowPosDX, shadowPosDY);\n"
+#   else // USE_GLSL_TEXTUREGRAD
+    "   vec4 moments = texture2D(u_shadowMap, shadowCoordinateWdivide.xy);\n"
+#   endif //USE_GLSL_TEXTUREGRAD
+    "   float shadowFactor = ComputeMSM(moments,shadowCoordinateWdivide.z,u_shadowDepthAndMomentBiases.x*0.001,u_shadowDepthAndMomentBiases.y*0.001);\n"
 #   ifdef SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
     "   shadowFactor = smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,shadowFactor);\n"   // https://github.com/TheRealMJP/Shadows applies this before taking the min(...). Is this the same ?
 #   else //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
@@ -635,6 +671,11 @@ void InitGL(void) {
 #   if SHADOW_MAP_BLUR_KERNEL_SIZE>1
     InitBlurPass(&blurPass);
 #   endif
+
+    // New
+#   ifdef USE_GLSL_TEXTUREGRAD
+    //glHint(GL_FRAGMENT_SHADER_DERIVATIVE_HINT,GL_NICEST);   // Optional if USE_GLSL_TEXTUREGRAD is defined in the default pass fragment shader (GL_FASTEST, GL_NICEST, and GL_DONT_CARE)
+#   endif //USE_GLSL_TEXTUREGRAD
 
     // Please note that after InitGL(), this implementation calls ResizeGL(...,...).
     // If you copy/paste this code you can call it explicitly...
