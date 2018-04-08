@@ -1,6 +1,9 @@
 // https://github.com/Flix01/Tiny-OpenGL-Shadow-Mapping-Examples
-// This demo is greatly based on https://github.com/TheRealMJP/Shadows (MIT Licensed)
+//
+// Pdf: Moment Shadow Mapping - Christoph Peters, Reinhard Klein (http://cg.cs.uni-bonn.de/aigaion2root/attachments/MomentShadowMapping.pdf)
+// This demo is greatly based on the Direct3D implementation available at: https://github.com/TheRealMJP/Shadows (MIT Licensed)
 // Blur filters are based on https://github.com/Jam3/glsl-fast-gaussian-blur/ (MIT licensed)
+//
 /** License
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1148,7 +1151,13 @@ void GlutCreateWindow() {
         }
     }
     if (!gameModeWindowId) {
-        char windowTitle[1024] = PROGRAM_NAME".c\t("XSTR_MACRO(SHADOW_MAP_RESOLUTION)")\tblur: "XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE)"x"XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE);
+        char windowTitle[1024] = PROGRAM_NAME".c\t";
+#       ifdef __EMSCRIPTEN__
+        strcat(windowTitle,"16bit");
+#       else // __EMSCRIPTEN__
+        strcat(windowTitle,"32bit");
+#       endif //__EMSCRIPTEN__
+        strcat(windowTitle," "XSTR_MACRO(SHADOW_MAP_RESOLUTION)" \tblur: "XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE)"x"XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE));
 #       ifndef SHADOW_MAP_BLUR_USING_BOX_FILTER
         strcat(windowTitle," gaussian");
 #       else // SHADOW_MAP_BLUR_USING_BOX_FILTER
