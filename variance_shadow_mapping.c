@@ -224,11 +224,12 @@ static const char* ShadowPassFragmentShader[] = {   // From http://fabiensanglar
     "       float moment2 = depth * depth;\n"
     "\n"
     "       // Adjusting moments (this is sort of bias per pixel) using derivative\n"
+    "       // (However many implementations just skip these 3 lines)\n"
     "       float dx = dFdx(depth);\n"
     "       float dy = dFdy(depth);\n"
     "       moment2 += 0.25*(dx*dx+dy*dy);\n"
     "\n"
-    "       gl_FragColor = vec4(moment1,moment2, 0.0, 0.0 );\n"
+    "       gl_FragColor = vec4(moment1,moment2, 0.0, 0.0);\n"
     "   }\n"
 };
 typedef struct {
@@ -347,7 +348,7 @@ static const char* DefaultPassFragmentShader[] = {
     "   // We now use chebyshev's upperBound to check\n"
     "   // How likely this pixel is to be lit (p_max)\n"
     "   float variance = moments.y - (moments.x*moments.x);\n"
-    "   variance = max(variance,0.00002);\n"    // Here we can specify the minimum variance
+    "   variance = max(variance,0.0000001);\n"    // Here we can specify the minimum variance (it affects Peter Panning)
     "\n"
     "   float d = distance - moments.x;\n"
     "   float p_max = variance / (variance + d*d);\n"   // 0<p_max<1
@@ -654,11 +655,8 @@ void DrawGL(void)
 
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
-        float cameraPosition[3]           = {vMatrixInverse[12],vMatrixInverse[13],vMatrixInverse[14]};     // We already have it: cameraPos[0],cameraPos[1],cameraPos[2]... just in case you didn't know...
-        float cameraForwardDirection[3]   = {-vMatrixInverse[8],-vMatrixInverse[9],-vMatrixInverse[10]};    // minus because the camera looks in its -Z axis (unlike other objects in OpenGL)
-
         Helper_GetLightViewProjectionMatrix(lvpMatrix,
-                                             cameraPosition,cameraForwardDirection,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
+                                             vMatrixInverse,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
                                              lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION);
 
 

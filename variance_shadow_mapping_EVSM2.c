@@ -671,11 +671,8 @@ void DrawGL(void)
 
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
-        float cameraPosition[3]           = {vMatrixInverse[12],vMatrixInverse[13],vMatrixInverse[14]};     // We already have it: cameraPos[0],cameraPos[1],cameraPos[2]... just in case you didn't know...
-        float cameraForwardDirection[3]   = {-vMatrixInverse[8],-vMatrixInverse[9],-vMatrixInverse[10]};    // minus because the camera looks in its -Z axis (unlike other objects in OpenGL)
-
         Helper_GetLightViewProjectionMatrix(lvpMatrix,
-                                             cameraPosition,cameraForwardDirection,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
+                                             vMatrixInverse,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
                                              lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION);
 
 

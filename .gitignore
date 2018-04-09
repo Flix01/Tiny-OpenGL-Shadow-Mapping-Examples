@@ -58,6 +58,7 @@ code/
 code
 reps/
 shadow_mapping
+shadow_mapping_advanced
 shadow_mapping_pcf
 shadow_mapping_cascade
 shadow_mapping_cascade_texture_array

@@ -1,7 +1,15 @@
 // https://github.com/Flix01/Tiny-OpenGL-Shadow-Mapping-Examples
-// This demo is greatly based on http://fabiensanglard.net/shadowmappingVSM/
-// and on https://github.com/TheRealMJP/Shadows (MIT Licensed) [basically I didn't know know to sample the shadow map]
-// Blur filters are based on https://github.com/Jam3/glsl-fast-gaussian-blur/ (MIT licensed)
+//
+// This demo TRIES to address the following two problems:
+// 1) The detection of (a portion of) the wasted shadow texture space.
+// 2) The lack of an efficient lvpMatrix for frustum culling usage.
+//
+// Actually point 2 is not shown here, even if such a matrix can be retrieved.
+//
+// [Not sure code is 100% correct]
+//
+// Please see README.md for further info.
+
 /** License
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -29,9 +37,9 @@
 // HOW TO COMPILE:
 /*
 // LINUX:
-gcc -O2 -std=gnu89 variance_shadow_mapping_EVSM4.c -o variance_shadow_mapping_EVSM4 -I"../" -lglut -lGL -lX11 -lm
+gcc -O2 -std=gnu89 shadow_mapping_advanced.c -o shadow_mapping_advanced -I"../" -lglut -lGL -lX11 -lm
 // WINDOWS (here we use the static version of glew, and glut32.lib, that can be replaced by freeglut.lib):
-cl /O2 /MT /Tc variance_shadow_mapping_EVSM4.c /D"GLEW_STATIC" /I"../" /link /out:variance_shadow_mapping_EVSM4.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
+cl /O2 /MT /Tc shadow_mapping_advanced.c /D"GLEW_STATIC" /I"../" /link /out:shadow_mapping_advanced.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
 
 
 // IN ADDITION:
@@ -46,24 +54,14 @@ for glut.h, glew.h, etc. with something like:
 //#define USE_GLEW  // By default it's only defined for Windows builds (but can be defined in Linux/Mac builds too)
 
 
-#define PROGRAM_NAME "variance_shadow_mapping_EVSM4"
+#define PROGRAM_NAME "shadow_mapping_advanced"
 #define VISUALIZE_DEPTH_TEXTURE
 #define SHADOW_MAP_RESOLUTION 1024 //1024
 #define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE // GL_CLAMP or GL_CLAMP_TO_EDGE or GL_CLAMP_TO_BORDER
     //          GL_CLAMP;               // sampling outside of the shadow map gives always shadowed pixels
     //          GL_CLAMP_TO_EDGE;       // sampling outside of the shadow map can give shadowed or unshadowed pixels (it depends on the edge of the shadow map)
     //          GL_CLAMP_TO_BORDER;     // sampling outside of the shadow map gives always non-shadowed pixels (if we set the border color correctly)
-#define SHADOW_MAP_FILTER GL_LINEAR     // GL_LINEAR_MIPMAP_LINEAR or GL_LINEAR
-//#define SHADOW_MAP_BLUR_USING_BOX_FILTER    // Optional [Not sure code is correct]
-#define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
-
-// Please leave at least one decimal
-// Values must be positive and less than:
-// 42.0f (32bit texture precision) or 5.54f (16bit texture precision) [https://github.com/TheRealMJP/Shadows]
-// Usually 30.0 and 10.0 are good for 32bit
-#define SHADOW_MAP_EXPONENTIAL_POSITIVE_COEFFICIENT 10.0
-#define SHADOW_MAP_EXPONENTIAL_NEGATIVE_COEFFICIENT 10.0
-//#define SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION    // Otherwise linear step is used (cheaper?)
+#define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR is more useful with a sampler2DShadow, that cannot be used with esponential shadow mapping)
 
 
 // These path definitions can be passed to the compiler command-line
@@ -95,14 +93,6 @@ for glut.h, glew.h, etc. with something like:
 
 #define STR_MACRO(s) #s
 #define XSTR_MACRO(s) STR_MACRO(s)
-
-#if (!defined(SHADOW_MAP_BLUR_KERNEL_SIZE) || SHADOW_MAP_BLUR_KERNEL_SIZE<=0)
-#   undef SHADOW_MAP_BLUR_KERNEL_SIZE
-#   define SHADOW_MAP_BLUR_KERNEL_SIZE 1
-#endif
-#if (SHADOW_MAP_BLUR_KERNEL_SIZE==(SHADOW_MAP_BLUR_KERNEL_SIZE/2)*2)
-#   error SHADOW_MAP_BLUR_KERNEL_SIZE must be an odd number
-#endif
 
 #include "helper_functions.h"   // please search this .c file for "Helper_":
                                 // only very few of its functions are used.
@@ -202,7 +192,7 @@ float lightYaw = M_PI*0.425f,lightPitch = M_PI*0.235f;   // must be copied to re
 float lightDirection[4] = {0,1,0,0};                    // Derived value (do not edit) [lightDirection[3]==0]
 
 // pMatrix data:
-float pMatrix[16];                      // projection matrix
+float pMatrix[16],pMatrixInv[16];                      // projection matrix
 const float pMatrixFovyDeg = 45.f;      // smaller => better shadow resolution
 const float pMatrixNearPlane = 0.5f;    // bigger  => better shadow resolution
 const float pMatrixFarPlane = 20.f;     // smaller => better shadow resolution
@@ -214,38 +204,18 @@ GLuint gDisplayListBase = 0;GLuint* pgDisplayListBase = &gDisplayListBase;  // C
 
 
 static const char* ShadowPassVertexShader[] = {
-    "varying vec4 v_position;\n"
-    "\n"
     "   void main() {\n"
     "       gl_Position = ftransform();\n"
-    "       v_position = gl_Position;\n"
     "   }\n"
 };
-static const char* ShadowPassFragmentShader[] = {   // From http://fabiensanglard.net/shadowmappingVSM/index.php
-    "#define POS_COEFF "XSTR_MACRO(SHADOW_MAP_EXPONENTIAL_POSITIVE_COEFFICIENT)"\n"
-    "#define NEG_COEFF "XSTR_MACRO(SHADOW_MAP_EXPONENTIAL_NEGATIVE_COEFFICIENT)"\n"
-    "\n"
-    "varying vec4 v_position;\n"
-    "\n"
+static const char* ShadowPassFragmentShader[] = {
     "   void main() {\n"
-    "       float depth = v_position.z/v_position.w;\n"
-    "       depth = depth * 0.5 + 0.5;			//Don't forget to move away from unit cube ([-1,1]) to [0,1] coordinate system\n"
-    "\n"
-    "       float moment1 = depth;\n"
-    "       float moment2 = depth * depth;\n"
-    "\n"
-    "       // Adjusting moments (this is sort of bias per pixel) using derivative\n"
-    "       float dx = dFdx(depth);\n"
-    "       float dy = dFdy(depth);\n"
-    "       moment2 += 0.25*(dx*dx+dy*dy);\n"
-    "\n"
-    "       gl_FragColor = vec4(exp(POS_COEFF*moment1),exp(POS_COEFF*moment2), -exp(-NEG_COEFF*moment1),-exp(-NEG_COEFF*moment2));\n"
+    "       //gl_FragColor =  gl_Color;\n"
     "   }\n"
 };
 typedef struct {
     GLuint fbo;
-    GLuint depthTextureId;
-    GLuint colorTextureId;
+    GLuint textureId;
     GLuint program;
 } ShadowPass;
 
@@ -254,12 +224,12 @@ void InitShadowPass(ShadowPass* sp)	{
     sp->program = Helper_LoadShaderProgramFromSource(*ShadowPassVertexShader,*ShadowPassFragmentShader);
 
     // create depth texture
-    glGenTextures(1, &sp->depthTextureId);
-    glBindTexture(GL_TEXTURE_2D, sp->depthTextureId);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glGenTextures(1, &sp->textureId);
+    glBindTexture(GL_TEXTURE_2D, sp->textureId);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, SHADOW_MAP_FILTER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, SHADOW_MAP_FILTER);
 #   ifndef __EMSCRIPTEN__
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_BYTE, 0);
 #   else //__EMSCRIPTEN__
     glTexImage2D( GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, 0);
 #   undef SHADOW_MAP_CLAMP_MODE
@@ -273,40 +243,14 @@ void InitShadowPass(ShadowPass* sp)	{
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, SHADOW_MAP_CLAMP_MODE );
     glBindTexture(GL_TEXTURE_2D, 0);
 
-
-    // create texture
-    glGenTextures(1, &sp->colorTextureId);
-    glBindTexture(GL_TEXTURE_2D, sp->colorTextureId);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, SHADOW_MAP_FILTER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-#   ifndef __EMSCRIPTEN__
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA32F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RGBA, GL_FLOAT, 0);
-#   else //__EMSCRIPTEN__
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RGBA, GL_FLOAT, 0);
-#   undef SHADOW_MAP_CLAMP_MODE
-#   define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE
-#   endif //__EMSCRIPTEN__
-    if (SHADOW_MAP_CLAMP_MODE==GL_CLAMP_TO_BORDER)  {
-        const GLfloat border[] = {1.0f,1.0f,1.0f,0.0f };
-        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
-    }
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, SHADOW_MAP_CLAMP_MODE );
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, SHADOW_MAP_CLAMP_MODE );
-#   if (SHADOW_MAP_FILTER==GL_LINEAR_MIPMAP_LINEAR || SHADOW_MAP_FILTER==GL_LINEAR_MIPMAP_NEAREST || SHADOW_MAP_FILTER==GL_NEAREST_MIPMAP_LINEAR || SHADOW_MAP_FILTER==GL_NEAREST_MIPMAP_NEAREST)
-    glGenerateMipmap(GL_TEXTURE_2D);
-#   endif
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-
     // create depth fbo
     glGenFramebuffers(1, &sp->fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, sp->fbo);
 #   ifndef __EMSCRIPTEN__
-    //glDrawBuffer(GL_NONE); // Instruct openGL that we won't bind a color texture with the currently bound FBO
-    glReadBuffer(GL_NONE);    // Maybe this line can be activated
+    glDrawBuffer(GL_NONE); // Instruct openGL that we won't bind a color texture with the currently bound FBO
+    glReadBuffer(GL_NONE);
 #   endif //__EMSCRIPTEN__
-    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, sp->colorTextureId, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sp->depthTextureId, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_TEXTURE_2D,sp->textureId, 0);
     {
         //Does the GPU support current FBO configuration?
         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -317,8 +261,7 @@ void InitShadowPass(ShadowPass* sp)	{
 void DestroyShadowPass(ShadowPass* sp)	{
     if (sp->program) {glDeleteProgram(sp->program);sp->program=0;}
     if (sp->fbo) {glDeleteBuffers(1,&sp->fbo);sp->fbo=0;}
-    if (sp->depthTextureId) {glDeleteTextures(1,&sp->depthTextureId);sp->depthTextureId=0;}
-    if (sp->colorTextureId) {glDeleteTextures(1,&sp->colorTextureId);sp->colorTextureId=0;}
+    if (sp->textureId) {glDeleteTextures(1,&sp->textureId);}
 }
 
 static const char* DefaultPassVertexShader[] = {
@@ -335,57 +278,21 @@ static const char* DefaultPassVertexShader[] = {
     "	v_diffuse = gl_LightSource[0].diffuse * nxDir; \n"
 	"\n"	
     "	gl_FrontColor = gl_Color;\n"
-    "\n"
+	"\n"
     "   v_shadowCoord = u_biasedShadowMvpMatrix*(gl_ModelViewMatrix*gl_Vertex);\n"  // (*) We don't pass a 'naked' mMatrix in shaders (not robust to double precision usage). We dress it in a mvMatrix. So here we're passing a mMatrix from camera space to light space (through a mvMatrix).
     "}\n"                                                                           // (the bias just converts clip space to texture space)
 };
 static const char* DefaultPassFragmentShader[] = {
-    "#define POS_COEFF "XSTR_MACRO(SHADOW_MAP_EXPONENTIAL_POSITIVE_COEFFICIENT)"\n"
-    "#define NEG_COEFF "XSTR_MACRO(SHADOW_MAP_EXPONENTIAL_NEGATIVE_COEFFICIENT)"\n"
-    "\n"
     "uniform sampler2D u_shadowMap;\n"
-    "uniform vec2 u_shadowLightBleedingReductionAndDarkening;\n" // Both values in [0.0-1.0]
+    "uniform vec2 u_shadowDarkening;\n" // .x = fDarkeningFactor [10.0-80.0], .y = min value clamp [0.0-1.0]
     "varying vec4 v_shadowCoord;\n"
     "varying vec4 v_diffuse;\n"
     "\n"
-    "float linstep(float low, float high, float v)	{\n"
-    "	return clamp((v-low)/(high-low), 0.0, 1.0);\n"
-    "}\n"
-    "\n" // Please see https://github.com/TheRealMJP/Shadows:
-    "float chebyshevUpperBound(vec2 texCoord,float distance) {\n"
-    "   // Rescale distance into [-1, 1]\n"
-    "   //float depth = 2.0 * distance - 1.0;\n"    // Nope, we've used u_BIASEDShadowMvpMatrix in the vertex shader
-    "   float depth = distance;\n"
-    "   vec2 warpedDepths = vec2(exp(POS_COEFF*depth),-exp(-NEG_COEFF*depth));\n"
-    "   vec4 moments = texture2D(u_shadowMap,texCoord);\n"
-    "   // Surface is fully lit. as the current fragment is before the light occluder\n"
-    "   if (warpedDepths.x <= moments.x || warpedDepths.y <= moments.z)  return 1.0;\n"  // Can we remove this branch ?
-    "\n"
-    "   // Derivative of warping at depth\n"
-    "   vec2 depthScale = 0.01 * 0.01 * vec2(POS_COEFF,NEG_COEFF) * warpedDepths;\n" // Here VSMBias = 0.01, but can be adjusted
-    "   vec2 minVariance = depthScale*depthScale;\n"    // depthScale is just used to calculate minVariance. Can't we just hard-code it like we did in VSM ?
-    "   // The fragment is either in shadow or penumbra.\n"
-    "   // We now use chebyshev's upperBound to check\n"
-    "   // How likely this pixel is to be lit (p_max)\n"
-    "   vec2 variance = vec2(moments.y - (moments.x*moments.x),moments.w - (moments.z*moments.z));\n"
-    "   variance = max(variance,minVariance);\n"
-    "\n"
-    "   vec2 d = warpedDepths - moments.xz;\n"
-    "   vec2 p_max = vec2(variance.x/(variance.x+d.x*d.x),variance.y/(variance.y+d.y*d.y));\n"   // 0<p_max<1
-    "\n"
-    "  float p_max_min = min(p_max.x,p_max.y);\n"   // We can simply return this (we use u_shadowLightBleedingReductionAndDarkening.x = 0)    
-#   ifdef SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
-    "   return smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max_min);\n"   // https://github.com/TheRealMJP/Shadows applies this before taking the min(...). Is this the same ?
-#   else //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
-    "   return linstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max_min);\n"  // https://github.com/TheRealMJP/Shadows applies this before taking the min(...). Is this the same ?
-#   endif //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
-    "}\n"
-    "\n"
     "void main() {\n"
+    "	float shadowFactor = 1.0;\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
-    "   float shadowFactor = chebyshevUpperBound(shadowCoordinateWdivide.st,shadowCoordinateWdivide.z);\n"
-    "   shadowFactor = u_shadowLightBleedingReductionAndDarkening.y + (1.0-u_shadowLightBleedingReductionAndDarkening.y)*shadowFactor;\n"
-    "   \n"
+    "   shadowFactor = clamp(exp(u_shadowDarkening.x*(texture2D(u_shadowMap,(shadowCoordinateWdivide.st)).r - shadowCoordinateWdivide.z)),u_shadowDarkening.y,1.0);\n"
+    "//   shadowFactor = clamp(   exp(u_shadowDarkening.x*texture2D(u_shadowMap,(shadowCoordinateWdivide.st)).r) *   exp(-u_shadowDarkening.x*shadowCoordinateWdivide.z),u_shadowDarkening.y,1.0);\n"
     "	gl_FragColor = gl_LightSource[0].ambient + (v_diffuse * vec4(gl_Color.rgb*shadowFactor,1.0));\n"
     "}\n"
 };
@@ -393,7 +300,7 @@ typedef struct {
     GLuint program;
     GLint uniform_location_biasedShadowMvpMatrix;
     GLint uniform_location_shadowMap;
-    GLint uniform_location_shadowLightBleedingReductionAndDarkening;
+    GLint uniform_location_shadowDarkening;
 } DefaultPass;
 
 DefaultPass defaultPass;
@@ -401,177 +308,17 @@ void InitDefaultPass(DefaultPass* dp)	{
 	dp->program = Helper_LoadShaderProgramFromSource(*DefaultPassVertexShader,*DefaultPassFragmentShader);
     dp->uniform_location_biasedShadowMvpMatrix = glGetUniformLocation(dp->program,"u_biasedShadowMvpMatrix");
     dp->uniform_location_shadowMap = glGetUniformLocation(dp->program,"u_shadowMap");
-    dp->uniform_location_shadowLightBleedingReductionAndDarkening = glGetUniformLocation(dp->program,"u_shadowLightBleedingReductionAndDarkening");
+    dp->uniform_location_shadowDarkening = glGetUniformLocation(dp->program,"u_shadowDarkening");
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
-    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.0,0.5); // Both values in [0.0-1.0]
+    glUniform2f(dp->uniform_location_shadowDarkening,80.0,0.45);	// Default values are (40.0f,0.75f) in [0-80] and [0-1]
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, 1 /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
 	glUseProgram(0);
 }
 void DestroyDefaultPass(DefaultPass* dp)	{
 	if (dp->program) {glDeleteProgram(dp->program);dp->program=0;}
 }
-
-
-#if SHADOW_MAP_BLUR_KERNEL_SIZE>1
-// Mostly adapted from the Github repository: https://github.com/Jam3/glsl-fast-gaussian-blur/ (MIT license)
-// Probably to be optimized a bit... Also there's no penumbra. Why ?
-static const char* BlurPassVertexShader[] = {
-    "varying vec2 v_uv;\n"
-    "\n"
-    "void main()	{\n"
-    "	gl_Position = gl_Vertex;\n"
-    "   v_uv = gl_MultiTexCoord0.xy;\n"
-    "}\n"
-};
-static const char* BlurPassFragmentShader[] = {
-    "#define SHADOW_MAP_BLUR_KERNEL_SIZE "XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE)"\n"
-    "uniform vec2 u_resolution;\n"      // Maybe using the C macro would be faser
-    "uniform sampler2D u_sampler;\n"
-    "uniform vec2 u_direction;\n"
-    "\n"
-    "varying vec2 v_uv;\n"
-    "\n"
-#   ifndef SHADOW_MAP_BLUR_USING_BOX_FILTER
-#   if SHADOW_MAP_BLUR_KERNEL_SIZE==3
-    "   vec4 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"  // Not in https://github.com/Jam3/glsl-fast-gaussian-blur/. [Not sure code is correct]
-    "       vec4 color = vec4(0.0);\n"
-    "       vec2 off1 = vec2(0.5) * direction / resolution;\n"
-    "       color += texture2D(image, uv + off1) * 0.5;\n"
-    "       color += texture2D(image, uv - off1) * 0.5;\n"
-    "       return color;\n"
-    "   }\n"
-    "\n"
-#   elif SHADOW_MAP_BLUR_KERNEL_SIZE==5
-    "   vec4 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
-    "       vec4 color = vec4(0.0);\n"
-    "       vec2 off1 = vec2(1.3333333333333333) * direction / resolution;\n"
-    "       color += texture2D(image, uv) * 0.29411764705882354;\n"
-    "       color += texture2D(image, uv + off1) * 0.35294117647058826;\n"
-    "       color += texture2D(image, uv - off1) * 0.35294117647058826;\n"
-    "       return color;\n"
-    "   }\n"
-    "\n"
-#   elif SHADOW_MAP_BLUR_KERNEL_SIZE==9
-    "   vec4 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
-    "       vec4 color = vec4(0.0);\n"
-    "       vec2 off1 = vec2(1.3846153846) * direction / resolution;\n"
-    "       vec2 off2 = vec2(3.2307692308) * direction / resolution;\n"
-    "       color += texture2D(image, uv) * 0.2270270270;\n"
-    "       color += texture2D(image, uv + off1) * 0.3162162162;\n"
-    "       color += texture2D(image, uv - off1) * 0.3162162162;\n"
-    "       color += texture2D(image, uv + off2) * 0.0702702703;\n"
-    "       color += texture2D(image, uv - off2) * 0.0702702703;\n"
-    "       return color;\n"
-    "   }\n"
-    "\n"
-#   elif SHADOW_MAP_BLUR_KERNEL_SIZE==13
-    "   vec4 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"
-    "       vec4 color = vec4(0.0);\n"
-    "       vec2 off1 = vec2(1.411764705882353) * direction / resolution;\n"
-    "       vec2 off2 = vec2(3.2941176470588234) * direction / resolution;\n"
-    "       vec2 off3 = vec2(5.176470588235294) * direction / resolution;\n"
-    "       color += texture2D(image, uv) * 0.1964825501511404;\n"
-    "       color += texture2D(image, uv + off1) * 0.2969069646728344;\n"
-    "       color += texture2D(image, uv - off1) * 0.2969069646728344;\n"
-    "       color += texture2D(image, uv + off2) * 0.09447039785044732;\n"
-    "       color += texture2D(image, uv - off2) * 0.09447039785044732;\n"
-    "       color += texture2D(image, uv + off3) * 0.010381362401148057;\n"
-    "       color += texture2D(image, uv - off3) * 0.010381362401148057;\n"
-    "       return color;\n"
-    "   }\n"
-    "\n"
-#   else // SHADOW_MAP_BLUR_KERNEL_SIZE
-#   error SHADOW_MAP_BLUR_KERNEL_SIZE unsupported value
-#   endif // SHADOW_MAP_BLUR_KERNEL_SIZE
-#   else //SHADOW_MAP_BLUR_USING_BOX_FILTER
-    "   vec4 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction) {\n"  // Made this myself [Not sure code is correct]
-    "       const float edgeVal = 0.5+float((SHADOW_MAP_BLUR_KERNEL_SIZE/2-1));\n"
-    "       const float startVal = -edgeVal;\n"
-    "       const float endVal = edgeVal+0.5;\n"    // we use +0.5 and < instead of <= in the for loop (more robust)
-    "       vec2 off = direction/resolution;\n"
-    "       float x;\n"
-    "       vec4 color = vec4(0.0);\n"
-    "       for (x=startVal;x<endVal;x+=1.0)    {\n"
-    "           color+=texture2D(image, uv+vec2(x*off.x,x*off.y));\n"
-    "       }\n"
-    "       color/=float(SHADOW_MAP_BLUR_KERNEL_SIZE-1);\n"
-    "       return color;\n"
-    "   }\n"
-#   endif //SHADOW_MAP_BLUR_USING_BOX_FILTER
-    "void main() {\n"
-    "   gl_FragColor = blur(u_sampler,v_uv,u_resolution.xy,u_direction);"
-    "}\n"
-};
-typedef struct {
-    GLuint program;
-    GLuint textureId;
-    GLuint fbo;
-
-    GLint uniform_location_resolution;
-    GLint uniform_location_sampler;
-    GLint uniform_location_direction;
-} BlurPass;
-
-BlurPass blurPass;
-void InitBlurPass(BlurPass* bp)	{
-    bp->program = Helper_LoadShaderProgramFromSource(*BlurPassVertexShader,*BlurPassFragmentShader);
-
-    bp->uniform_location_resolution = glGetUniformLocation(bp->program,"u_resolution");
-    bp->uniform_location_sampler = glGetUniformLocation(bp->program,"u_sampler");
-    bp->uniform_location_direction = glGetUniformLocation(bp->program,"u_direction");
-
-    glUseProgram(bp->program);
-    glUniform1i(bp->uniform_location_sampler,0);
-    glUniform2f(bp->uniform_location_resolution,(float)(SHADOW_MAP_RESOLUTION),(float)(SHADOW_MAP_RESOLUTION));
-    glUniform2f(bp->uniform_location_direction,1.0f,0.0f);
-    glUseProgram(0);
-
-
-    // create texture
-    glGenTextures(1, &bp->textureId);
-    glBindTexture(GL_TEXTURE_2D, bp->textureId);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-#   ifndef __EMSCRIPTEN__
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA32F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RGBA, GL_FLOAT, 0);
-#   else //__EMSCRIPTEN__
-    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA16F, SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 0, GL_RGBA, GL_FLOAT, 0);
-#   undef SHADOW_MAP_CLAMP_MODE
-#   define SHADOW_MAP_CLAMP_MODE GL_CLAMP_TO_EDGE
-#   endif //__EMSCRIPTEN__
-    if (SHADOW_MAP_CLAMP_MODE==GL_CLAMP_TO_BORDER)  {
-        const GLfloat border[] = {1.0f,1.0f,1.0f,0.0f };
-        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
-    }
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, SHADOW_MAP_CLAMP_MODE );
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, SHADOW_MAP_CLAMP_MODE );
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-
-    // create depth fbo
-    glGenFramebuffers(1, &bp->fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, bp->fbo);
-#   ifndef __EMSCRIPTEN__
-    //glDrawBuffer(GL_NONE); // Instruct openGL that we won't bind a color texture with the currently bound FBO
-    glReadBuffer(GL_NONE);    // Maybe this line can be activated
-#   endif //__EMSCRIPTEN__
-    glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D, bp->textureId, 0);
-    {
-        //Does the GPU support current FBO configuration?
-        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        if (status!=GL_FRAMEBUFFER_COMPLETE) printf("glCheckFramebufferStatus(...) FAILED for blurPass.fbo.\n");
-    }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-}
-void DestroyBlurPass(BlurPass* bp)	{
-    if (bp->program) {glDeleteProgram(bp->program);bp->program=0;}
-    if (bp->fbo) {glDeleteBuffers(1,&bp->fbo);bp->fbo=0;}
-    if (bp->textureId) {glDeleteTextures(1,&bp->textureId);bp->textureId=0;}
-}
-
-#endif //SHADOW_MAP_BLUR_KERNEL_SIZE
 
 float current_width=0,current_height=0,current_aspect_ratio=1;  // Not sure when I've used these...
 void ResizeGL(int w,int h) {
@@ -583,6 +330,8 @@ void ResizeGL(int w,int h) {
         Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
 
         glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
+
+        Helper_InvertMatrix(pMatrixInv,pMatrix);
 	}
 
 
@@ -605,7 +354,7 @@ void InitGL(void) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  // Otherwise transparent objects are not displayed correctly
     glClearColor(0.3f, 0.6f, 1.0f, 1.0f);
     glEnable(GL_TEXTURE_2D);    // Only needed for ffp, when VISUALIZE_DEPTH_TEXTURE is defined
-
+    glLineWidth(2.f);
 
 	// ffp stuff
     glEnable(GL_LIGHTING);
@@ -616,9 +365,6 @@ void InitGL(void) {
 	// New
     InitShadowPass(&shadowPass);
     InitDefaultPass(&defaultPass);
-#   if SHADOW_MAP_BLUR_KERNEL_SIZE>1
-    InitBlurPass(&blurPass);
-#   endif
 
     // Please note that after InitGL(), this implementation calls ResizeGL(...,...).
     // If you copy/paste this code you can call it explicitly...
@@ -628,10 +374,6 @@ void DestroyGL() {
 	// New
     DestroyShadowPass(&shadowPass);
     DestroyDefaultPass(&defaultPass);
-#   if SHADOW_MAP_BLUR_KERNEL_SIZE>1
-    DestroyBlurPass(&blurPass);
-#   endif
-
     // 40 display lists are generated by Helper_GlutDrawGeometry(...) if pgDisplayListBase!=0
     if (pgDisplayListBase && *pgDisplayListBase) {glDeleteLists(*pgDisplayListBase,40);*pgDisplayListBase=0;}
 }
@@ -651,6 +393,9 @@ void DrawGL(void)
     static float vMatrixInverse[16];            // view Matrix inverse (it's the camera matrix).
     static float lvpMatrix[16];                 // = light_pMatrix*light_vMatrix
 
+    // These are optimizations and enhanced visualization stuff
+    static float shadowTextureViewportClipping[4] = {0,0,SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION};
+    static float cameraFrustumCornersInLightNDC[8][4];  // Each in [-1,1]
 
     // Just some time stuff here
     if (begin==0) begin = glutGet(GLUT_ELAPSED_TIME);
@@ -673,76 +418,44 @@ void DrawGL(void)
     Helper_InvertMatrixFast(vMatrixInverse,vMatrix);    // We can use Helper_InvertMatrixFast(...) instead of Helper_InvertMatrix(...) here [No scaling inside and no projection matrix]
 
 
-
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
-        Helper_GetLightViewProjectionMatrix(lvpMatrix,
-                                             vMatrixInverse,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
-                                             lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION);
+        Helper_GetLightViewProjectionMatrixExtra(lvpMatrix,vMatrixInverse,
+                                             pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
+                                             lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION
+                                             ,0,0
+                                             ,pMatrixInv,shadowTextureViewportClipping
+                                             ,cameraFrustumCornersInLightNDC
+                                             ,0
+                                             );
 
 
         // Draw to shadow map texture
         glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();glMatrixMode(GL_MODELVIEW);        // We'll set the combined light view-projection matrix in GL_MODELVIEW (do you know that it's the same?)
         glBindFramebuffer(GL_FRAMEBUFFER, shadowPass.fbo);
         glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        //glCullFace(GL_FRONT);
-        //glEnable(GL_POLYGON_OFFSET_FILL);glPolygonOffset(-2.0f, -2.0f);
+#       ifdef VISUALIZE_DEPTH_TEXTURE // Optional
+        glClearDepth(0);glClear(GL_DEPTH_BUFFER_BIT);glClearDepth(1);   // All black
+#       endif //VISUALIZE_DEPTH_TEXTURE
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(shadowTextureViewportClipping[0],shadowTextureViewportClipping[1],shadowTextureViewportClipping[2],shadowTextureViewportClipping[3]);
+        glClear(GL_DEPTH_BUFFER_BIT);   // Clear only viewportClipping
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glCullFace(GL_FRONT);
         glEnable(GL_DEPTH_CLAMP);
-        glDisable(GL_LIGHTING);
-        glUseProgram(shadowPass.program);       // we can just use glUseProgram(0) here
+        glUseProgram(shadowPass.program);            // we can just use glUseProgram(0) here
         glPushMatrix();glLoadMatrixf(lvpMatrix); // we load both (light) projection and view matrices here (it's the same after all)
         Helper_GlutDrawGeometry(elapsedMs,cosAlpha,sinAlpha,targetPos,pgDisplayListBase);  // Done SHADOW_MAP_NUM_CASCADES times!
         glPopMatrix();
         glUseProgram(0);
-        glEnable(GL_LIGHTING);
         glDisable(GL_DEPTH_CLAMP);
-        //glDisable(GL_POLYGON_OFFSET_FILL);
-        //glCullFace(GL_BACK);
+        glCullFace(GL_BACK);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDisable(GL_SCISSOR_TEST);
         glBindFramebuffer(GL_FRAMEBUFFER,0);
         glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 
     }
-
-#   if SHADOW_MAP_BLUR_KERNEL_SIZE>1
-    // Blur shadow map
-    {
-        int i;
-        glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();
-        glMatrixMode(GL_MODELVIEW);glPushMatrix();glLoadIdentity();
-        glDisable(GL_DEPTH_TEST);glDepthMask(GL_FALSE);glDisable(GL_CULL_FACE);glDisable(GL_LIGHTING);
-        glViewport(0, 0, SHADOW_MAP_RESOLUTION,SHADOW_MAP_RESOLUTION);
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-
-        // Two passes: horizontal + vertical are faster
-        for (i=0;i<2;i++)   {
-            const GLuint FBOs[2]    = {blurPass.fbo,shadowPass.fbo};                    // Target texture
-            const GLuint TEXTs[2]   = {shadowPass.colorTextureId,blurPass.textureId};   // Source texture
-
-            glBindFramebuffer(GL_FRAMEBUFFER, FBOs[i]);
-            glUseProgram(blurPass.program);
-            glClear(GL_COLOR_BUFFER_BIT);
-            glBindTexture(GL_TEXTURE_2D,TEXTs[i]);
-            if (i==0)   glUniform2f(blurPass.uniform_location_direction,1.0f,0.0f);    // Horizontal
-            else        glUniform2f(blurPass.uniform_location_direction,0.0f,1.0f);    // Vertical
-            glColor3f(1,1,1);
-            glBegin(GL_QUADS);
-            glTexCoord2f(0,0);glVertex2f(-1,    -1);
-            glTexCoord2f(1,0);glVertex2f( 1,    -1);
-            glTexCoord2f(1,1);glVertex2f( 1,     1);
-            glTexCoord2f(0,1);glVertex2f(-1,     1);
-            glEnd();
-        }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glUseProgram(0);
-        glBindTexture(GL_TEXTURE_2D,0);
-
-        glEnable(GL_DEPTH_TEST);glDepthMask(GL_TRUE);glEnable(GL_CULL_FACE);glEnable(GL_LIGHTING);
-        glMatrixMode(GL_PROJECTION);glPopMatrix();
-        glMatrixMode(GL_MODELVIEW);glPopMatrix();
-    }
-#   endif //SHADOW_MAP_BLUR_KERNEL_SIZE>1
 
     // Draw world
     {
@@ -754,12 +467,8 @@ void DrawGL(void)
 
         // Draw to world
         glViewport(0, 0, current_width,current_height);
-        glClearColor(0.3f, 0.6f, 1.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glBindTexture(GL_TEXTURE_2D,shadowPass.colorTextureId); // or shadowPass.colorTextureId ???
-#       if (SHADOW_MAP_FILTER==GL_LINEAR_MIPMAP_LINEAR || SHADOW_MAP_FILTER==GL_LINEAR_MIPMAP_NEAREST || SHADOW_MAP_FILTER==GL_NEAREST_MIPMAP_LINEAR || SHADOW_MAP_FILTER==GL_NEAREST_MIPMAP_NEAREST)
-        glGenerateMipmap(GL_TEXTURE_2D);
-#       endif
+        glBindTexture(GL_TEXTURE_2D,shadowPass.textureId);
         glUseProgram(defaultPass.program);
         glUniformMatrix4fv(defaultPass.uniform_location_biasedShadowMvpMatrix, 1 /*only setting 1 matrix*/, GL_FALSE /*transpose?*/,biasedShadowMvpMatrix);
         Helper_GlutDrawGeometry(elapsedMs,cosAlpha,sinAlpha,targetPos,pgDisplayListBase);  // Done SHADOW_MAP_NUM_CASCADES times!
@@ -778,6 +487,11 @@ void DrawGL(void)
 
 #   ifdef VISUALIZE_DEPTH_TEXTURE
     {
+        float center[2] = {(-0.25*current_aspect_ratio-1.0)*0.5,(-0.25/current_aspect_ratio-1.0)*0.5};
+        float hexts[2]  = {(-0.25*current_aspect_ratio+1.0)*0.5,(-0.25/current_aspect_ratio+1.0)*0.5};
+        float minVal[2] = {center[0]-hexts[0],center[1]-hexts[1]};
+        float maxVal[2] = {center[0]+hexts[0],center[1]+hexts[1]};
+
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glDepthMask(GL_FALSE);
@@ -790,20 +504,79 @@ void DrawGL(void)
         glPushMatrix();
         glLoadIdentity();
 	
-		glColor3f(1,1,1);
-		glDisable(GL_LIGHTING);
+        glDisable(GL_LIGHTING);
         glEnable(GL_BLEND);
-        glBindTexture(GL_TEXTURE_2D,shadowPass.colorTextureId);
+        glBindTexture(GL_TEXTURE_2D,shadowPass.textureId);
         glColor4f(1,1,1,0.9f);
         glBegin(GL_QUADS);
-        glTexCoord2f(0,0);glVertex2f(-1,    -1);
-        glTexCoord2f(1,0);glVertex2f(-0.25*current_aspect_ratio, -1);
-        glTexCoord2f(1,1);glVertex2f(-0.25*current_aspect_ratio, -0.25/current_aspect_ratio);
-        glTexCoord2f(0,1);glVertex2f(-1,    -0.25/current_aspect_ratio);
+        glTexCoord2f(0,0);glVertex2f(minVal[0],    minVal[1]);
+        glTexCoord2f(1,0);glVertex2f(maxVal[0],    minVal[1]);
+        glTexCoord2f(1,1);glVertex2f(maxVal[0],    maxVal[1]);
+        glTexCoord2f(0,1);glVertex2f(minVal[0],    maxVal[1]);
         glEnd();
         glBindTexture(GL_TEXTURE_2D,0);
         glDisable(GL_BLEND);
 		glEnable(GL_LIGHTING);
+
+#       ifndef VISUALIZE_DEPTH_TEXTURE_BUT_SKIP_CAMERA_FRUSTUM
+        {
+            int i;
+            glDisable(GL_LIGHTING);
+            glEnable(GL_BLEND);
+            glBegin(GL_QUADS);
+            // Near plane
+            glColor4f(1,0,0,0.3f);
+            for (i=0;i<4;i++)   glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            // Far plane
+            glColor4f(0,1,0,0.3f);
+            for (i=4;i<8;i++)   glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            // Lateral Planes
+            glColor4f(1,1,0,0.3f);
+            i=0;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=4;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=5;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=1;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            //
+            glColor4f(1,1,0,0.3f);
+            i=1;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=5;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=6;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=2;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            //
+            glColor4f(1,1,0,0.3f);
+            i=2;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=6;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=7;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=3;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            //
+            glColor4f(1,1,0,0.3f);
+            i=3;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=7;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=4;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            i=0;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            glEnd();
+            // Lines around near plane
+            glColor4f(0.5f,0,0,0.3f);
+            glBegin(GL_LINE_LOOP);
+            for (i=0;i<4;i++)   glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            glEnd();
+            // Lines around far plane
+            glColor4f(0,0.5f,0,0.3f);
+            glBegin(GL_LINE_LOOP);
+            for (i=4;i<8;i++)   glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+            glEnd();
+            // Lateral Lines
+            glColor4f(0.5f,0.5f,0,0.3f);
+            glBegin(GL_LINES);
+            for (i=0;i<4;i++)   {
+                glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i][1]);
+                glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDC[i+4][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDC[i+4][1]);
+            }
+            glEnd();
+            glDisable(GL_BLEND);
+            glEnable(GL_LIGHTING);
+        }
+#       endif //VISUALIZE_DEPTH_TEXTURE_BUT_SKIP_CAMERA_FRUSTUM
 
         glPopMatrix();
         glMatrixMode(GL_PROJECTION);
@@ -1030,21 +803,10 @@ void GlutCreateWindow() {
         }
     }
     if (!gameModeWindowId) {
-        char windowTitle[1024] = PROGRAM_NAME".c\t("XSTR_MACRO(SHADOW_MAP_RESOLUTION)")\tblur: "XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE)"x"XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE);
-#       ifndef SHADOW_MAP_BLUR_USING_BOX_FILTER
-        strcat(windowTitle," gaussian");
-#       else // SHADOW_MAP_BLUR_USING_BOX_FILTER
-        strcat(windowTitle," box");
-#       endif // SHADOW_MAP_BLUR_USING_BOX_FILTER
-#       if (SHADOW_MAP_FILTER==GL_LINEAR)
-        strcat(windowTitle,"\tfilter: GL_LINEAR");
-#       elif (SHADOW_MAP_FILTER==GL_LINEAR_MIPMAP_LINEAR)
-        strcat(windowTitle,"\tfilter: GL_LINEAR_MIPMAP_LINEAR");
-#       endif // SHADOW_MAP_FILTER
         config.fullscreen_enabled = 0;
         glutInitWindowPosition(100,100);
         glutInitWindowSize(config.windowed_width,config.windowed_height);
-        windowId = glutCreateWindow(windowTitle);
+        windowId = glutCreateWindow(PROGRAM_NAME".c\t("XSTR_MACRO(SHADOW_MAP_RESOLUTION)")");
     }
 
     glutKeyboardFunc(GlutNormalKeys);

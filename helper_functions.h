@@ -409,11 +409,18 @@ static __inline void Helper_GetFrustumAabbCenterAndHalfExtents(hloat* __restrict
     }
 }
 
-static __inline void Helper_GetLightViewProjectionMatrix(hloat* __restrict lvpMatrixOut16,
-                                                          const hloat*  __restrict cameraPosition3,
-                                                          const hloat*  __restrict cameraForwardDirection3,
+// 'optionalPMatrixInverse16' is REQUIRED only if you need to retrieve the arguments that follow it (otherwise program crashes).
+static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict lvpMatrixOut16,
+                                                          const hloat* __restrict cameraVMatrixInverse16,
                                                           hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
-                                                          const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement)  {
+                                                          const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement
+                                                          ,hloat* __restrict optionalSphereCenterOut,hloat* __restrict optionalSphereRadiiSquaredOut
+                                                          ,const hloat* __restrict optionalCameraPMatrixInverse16
+                                                          ,hloat* __restrict optionalLightViewportClippingOut4,hloat optionalCameraFrustumPointsInNDCLightSpaceOut[8][4]
+                                                          ,hloat* __restrict optionalLVPMatrixForFrustumCullingUsageOut16   // Highly experimental and untested
+                                                          )  {
+    const hloat cameraPosition3[3] = {cameraVMatrixInverse16[12],cameraVMatrixInverse16[13],cameraVMatrixInverse16[14]};
+    const hloat cameraForwardDirection3[3] = {-cameraVMatrixInverse16[8],-cameraVMatrixInverse16[9],-cameraVMatrixInverse16[10]};
     hloat frustumCenter[3] = {0,0,0};hloat radius = 0;
     hloat lpMatrix[16],lvMatrix[16];
     int i;
@@ -427,7 +434,10 @@ static __inline void Helper_GetLightViewProjectionMatrix(hloat* __restrict lvpMa
     frustumCenterDistance = halfNearFarClippingPlane*(1.0+tanFovDiagonalSquared);
     if (frustumCenterDistance > cameraFarClippingPlane) frustumCenterDistance = cameraFarClippingPlane;
     for (i=0;i<3;i++) frustumCenter[i] = cameraPosition3[i]+cameraForwardDirection3[i]*frustumCenterDistance;
-    radius = sqrt( (tanFovDiagonalSquared*cameraFarClippingPlane*cameraFarClippingPlane) + (cameraFarClippingPlane-frustumCenterDistance)*(cameraFarClippingPlane-frustumCenterDistance));
+    radius = (tanFovDiagonalSquared*cameraFarClippingPlane*cameraFarClippingPlane) + (cameraFarClippingPlane-frustumCenterDistance)*(cameraFarClippingPlane-frustumCenterDistance);
+    if (optionalSphereCenterOut)        *optionalSphereCenterOut = frustumCenterDistance;
+    if (optionalSphereRadiiSquaredOut)  *optionalSphereRadiiSquaredOut = radius;
+    radius = sqrt(radius);
     //fprintf(stderr,"radius=%1.4f frustumCenterDistance=%1.4f nearPlane=%1.4f farPlane = %1.4f\n",radius,frustumCenterDistance,cameraNearClippingPlane,cameraFarClippingPlane);
 
     // For people trying to save texture space it's:  halfNearFarClippingPlane <= frustumCenterDistance <= cameraFarClippingPlane
@@ -471,6 +481,73 @@ static __inline void Helper_GetLightViewProjectionMatrix(hloat* __restrict lvpMa
 
     // Debug stuff
     //fprintf(stderr,"radius=%1.5f frustumCenter={%1.5f,%1.5f,%1.5f}\n",radius,frustumCenter[0],frustumCenter[1],frustumCenter[2]);
+
+    // Extra stuff [Not sure code is correct: the returned viewport seems too big!]
+    if (optionalCameraPMatrixInverse16) {
+        int j;
+        hloat cameraVPMatrixInv[16],cameraVPMatrixInverseAdjusted[16];hloat frustumPoints[8][4];
+        hloat minVal[3],maxVal[3],tmp;
+        Helper_MultMatrix(cameraVPMatrixInv,cameraVMatrixInverse16,optionalCameraPMatrixInverse16); // vMatrixInverse16 needs an expensive Helper_InvertMatrix(...) to be calculated. Here we can exploit the property of the product of 2 invertse matrices.
+        // If we call Helper_GetFrustumPoints(frustumPoints,cameraVPMatrixInv) we find the frustum corners in world space
+
+        Helper_MultMatrix(cameraVPMatrixInverseAdjusted,lvpMatrixOut16,cameraVPMatrixInv);  // This way we 'should' get all points in the [-1,1] light NDC space (or not?)
+
+        Helper_GetFrustumPoints(frustumPoints,cameraVPMatrixInverseAdjusted);
+
+        if (optionalCameraFrustumPointsInNDCLightSpaceOut) {
+            for (i=0;i<8;i++)   {
+                for (j=0;j<4;j++)   {
+                    optionalCameraFrustumPointsInNDCLightSpaceOut[i][j] = frustumPoints[i][j];
+                }
+            }
+        }
+
+        // Calculate 'minVal' and 'maxVal' based on 'frustumPoints'
+        for (i=0;i<3;i++)   minVal[i]=maxVal[i]=frustumPoints[0][i];
+        for (i=1;i<8;i++)   {
+            for (j=0;j<3;j++)   {   // We will actually skip the z component later...
+                tmp = frustumPoints[i][j];
+                if      (minVal[j]>tmp) minVal[j]=tmp;
+                else if (maxVal[j]<tmp) maxVal[j]=tmp;
+            }
+            //fprintf(stderr,"frustumPoints[%d]={%1.4f,%1.4f,%1.4f}\n",i,frustumPoints[i][0], frustumPoints[i][1], frustumPoints[i][2]);
+        }
+
+        if (optionalLightViewportClippingOut4)   {
+            optionalLightViewportClippingOut4[0] = minVal[0]*0.5+0.5;   // In [0,1] from [-1,1]
+            optionalLightViewportClippingOut4[1] = minVal[1]*0.5+0.5;   // In [0,1] from [-1,1]
+            optionalLightViewportClippingOut4[2] = (maxVal[0]-minVal[0])*0.5;    // extent x in [0,1]
+            optionalLightViewportClippingOut4[3] = (maxVal[1]-minVal[1])*0.5;    // extent y in [0,1]
+
+            for (i=0;i<4;i++)   {
+               optionalLightViewportClippingOut4[i]/=texelIncrement;    // viewport is in [0,texture_size]
+            }
+
+            //fprintf(stderr,"viewport={%1.4f,%1.4f,%1.4f,%1.4f}\n",optionalLightViewportClippingOut4[0],optionalLightViewportClippingOut4[1],optionalLightViewportClippingOut4[2],optionalLightViewportClippingOut4[3]);
+        }
+
+        if (optionalLVPMatrixForFrustumCullingUsageOut16)   {
+            // Experimental: never tested
+            Helper_Ortho(optionalLVPMatrixForFrustumCullingUsageOut16,
+                         minVal[0]*radius,maxVal[0]*radius,
+                         minVal[1]*radius,maxVal[1]*radius,
+                         0,-2.0*radius                      // For z, we just copy Helper_Ortho(lpMatrix,...)
+                         );
+            Helper_MultMatrix(optionalLVPMatrixForFrustumCullingUsageOut16,optionalLVPMatrixForFrustumCullingUsageOut16,lvMatrix);
+            // we don't apply the shadow swimming rotational fix for the frustum culling usage (should we ?)
+        }
+    }
+
+}
+
+
+
+
+static __inline void Helper_GetLightViewProjectionMatrix(hloat* __restrict lvpMatrixOut16,
+                                                          const hloat* __restrict cameraVMatrixInverse16,
+                                                          hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
+                                                          const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement)  {
+    return Helper_GetLightViewProjectionMatrixExtra(lvpMatrixOut16,cameraVMatrixInverse16,cameraNearClippingPlane,cameraFarClippingPlane,cameraFovyDeg,cameraAspectRatio,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
 }
 
 
@@ -671,6 +748,7 @@ static __inline int Helper_IsVisible(const hloat frustumPlanes[6][4],const hloat
     }
     return 1;
 }
+
 
 
 
