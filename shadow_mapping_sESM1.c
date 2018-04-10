@@ -581,7 +581,7 @@ void ResizeGL(int w,int h) {
     current_height = (float) h;
     if (current_height!=0) current_aspect_ratio = current_width/current_height;
     if (h>0)	{
-        // We set our pMatrix here in ResizeGL(), and we must notify teapot.h about it too.
+        // We set our pMatrix
         Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
 
         glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
