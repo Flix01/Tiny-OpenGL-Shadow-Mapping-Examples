@@ -1,4 +1,29 @@
 // https://github.com/Flix01/Tiny-OpenGL-Shadow-Mapping-Examples
+//
+// This demo is the extension of shadow_mapping_advanced.c to cascaded shadow maps.
+//
+// As you can see there are PLENTY of artifacts!
+//
+// To be honest both shadow_mapping_cascade.c and shadow_mapping_cascade_texture_array.c
+// are buggy themselves... (and to alleviate their effect, in Helper_GetLightViewProjectionMatricesExtra(...)
+// I made a (wrong) correction on the nearVal ortho matrix of the first split).
+//
+// However here the situation is much worse... the 'optimal texture viewport' does not work
+// as expected and its black frame gets projected to the screen every now and then.
+//
+// Not sure how to fix this issue... but for sure we should fix the artifacts in plain
+// shadow_mapping_cascade.c and shadow_mapping_cascade_texture_array.c before this.
+//
+// As usual, feel free to post fixes/suggestions/pull requests here:
+// https://github.com/Flix01/Tiny-OpenGL-Shadow-Mapping-Examples
+//
+
+// P.S. I've recently discovered that even the code in the NVIDIA reference paper about
+// cascaded shadow maps uses a hack to fix artifacts:
+// AFAIR (to check) they add 0.2 radians to the fovy angle during all the calculations...
+// Hey: this way fovy it's about 11 degrees wider than it should!
+// Although I've not tried their fix here, I hope there's a better solution to make things work.
+
 /** License
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -26,9 +51,9 @@
 // HOW TO COMPILE:
 /*
 // LINUX:
-gcc -O2 -std=gnu89 shadow_mapping_cascade.c -o shadow_mapping_cascade -I"../" -lglut -lGL -lX11 -lm
+gcc -O2 -std=gnu89 shadow_mapping_cascade_advanced.c -o shadow_mapping_cascade_advanced -I"../" -lglut -lGL -lX11 -lm
 // WINDOWS (here we use the static version of glew, and glut32.lib, that can be replaced by freeglut.lib):
-cl /O2 /MT /Tc shadow_mapping_cascade.c /D"GLEW_STATIC" /I"../" /link /out:shadow_mapping_cascade.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
+cl /O2 /MT /Tc shadow_mapping_cascade_advanced.c /D"GLEW_STATIC" /I"../" /link /out:shadow_mapping_cascade_advanced.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
 
 
 // IN ADDITION:
@@ -43,7 +68,7 @@ for glut.h, glew.h, etc. with something like:
 //#define USE_GLEW  // By default it's only defined for Windows builds (but can be defined in Linux/Mac builds too)
 
 
-#define PROGRAM_NAME "shadow_mapping_cascade"
+#define PROGRAM_NAME "shadow_mapping_cascade_advanced"
 #define VISUALIZE_DEPTH_TEXTURE
 //#define VISUALIZE_CASCADE_SPLITS
 #define SHADOW_MAP_HEIGHT 512               //SHADOW_MAP_WIDTH = SHADOW_MAP_NUM_CASCADES*SHADOW_MAP_HEIGHT
@@ -193,6 +218,11 @@ float pMatrix[16];                  // projection matrix
 const float pMatrixFovyDeg = 45.f;
 const float pMatrixNearPlane = 0.5f;
 const float pMatrixFarPlane = 20.0f;
+
+// we calculate these in ResizeGL(...)
+float gCascadeFarClipPlanes[SHADOW_MAP_NUM_CASCADES];   // Array of the far clipping planes of each cascade (gCascadeFarClipPlanes[SHADOW_MAP_NUM_CASCADES-1]==pMatrixFarPlane)
+float pMatrixInverseArray[16*SHADOW_MAP_NUM_CASCADES];           // Array of the inverse of the camera pMatrices of each cascade (near and far planes change, and so the pMatrices are different)
+
 
 float instantFrameTime = 16.2f;
 
@@ -351,16 +381,30 @@ void DestroyDefaultPass(DefaultPass* dp)	{
 	if (dp->program) {glDeleteProgram(dp->program);dp->program=0;}
 }
 
+
 float current_width=0,current_height=0,current_aspect_ratio=1;  // Not sure when I've used these...
 void ResizeGL(int w,int h) {
     current_width = (float) w;
     current_height = (float) h;
     if (current_height!=0) current_aspect_ratio = current_width/current_height;
     if (h>0)	{
-        // We set our pMatrix here in ResizeGL(), and we must notify teapot.h about it too.
+        int i;hloat curNearPlane = pMatrixNearPlane;
+
+        // We set our pMatrix
         Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
         glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
-	}
+
+        // Here we calculate the splits (gCascadeFarClipPlanes) based on lambda, and camera near and far planes:
+        Helper_GetCascadeFarPlaneArray(gCascadeFarClipPlanes,SHADOW_MAP_NUM_CASCADES,SHADOW_MAP_CASCADE_LAMBDA,pMatrixNearPlane,pMatrixFarPlane);
+
+        // Finally we compute one camera pMatrixInv per cascade to fill pMatrixInverseArray (needed for optimized shadow texture viewport and better debug visualization of the shadow texture):
+        for (i=0;i<SHADOW_MAP_NUM_CASCADES;i++)    {
+            hloat* pMatrixInverse = &pMatrixInverseArray[16*i];
+            Helper_Perspective(pMatrixInverse,pMatrixFovyDeg,(float)w/(float)h,curNearPlane,gCascadeFarClipPlanes[i]);
+            Helper_InvertMatrix(pMatrixInverse,pMatrixInverse); // in-place operation
+            curNearPlane = gCascadeFarClipPlanes[i];
+        }
+    }
 
 
     if (w>0 && h>0 && !config.fullscreen_enabled) {
@@ -382,7 +426,7 @@ void InitGL(void) {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);  // Otherwise transparent objects are not displayed correctly
     glClearColor(0.3f, 0.6f, 1.0f, 1.0f);
     glEnable(GL_TEXTURE_2D);    // Only needed for ffp, when VISUALIZE_DEPTH_TEXTURE is defined
-
+    glLineWidth(2.f);
 
 	// ffp stuff
     glEnable(GL_LIGHTING);
@@ -417,7 +461,11 @@ void DrawGL(void)
     static float vMatrixInverse[16];
     static float lvpMatrices[SHADOW_MAP_NUM_CASCADES*16];                 // = light_pMatrix*light_vMatrix
     static float biasedShadowMvpMatrices[SHADOW_MAP_NUM_CASCADES*16];     // multiplied per vMatrixInverse
-    static float cascadeFarClipPlanes[SHADOW_MAP_NUM_CASCADES];           // this should better be global... see below
+
+    // These are optimizations and enhanced visualization stuff
+    static float shadowTextureViewportClippingArray[4*SHADOW_MAP_NUM_CASCADES];
+    static float cameraFrustumCornersInLightNDCArray[8*SHADOW_MAP_NUM_CASCADES][4];  // Each in [-1,1]
+
 
     float elapsedMs;float cosAlpha,sinAlpha;    // used to move objects around
 
@@ -444,27 +492,33 @@ void DrawGL(void)
 
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
-        // This only changes with lambda, and camera near and far planes (so it can be safely  calculated just once at init time):
-        Helper_GetCascadeFarPlaneArray(cascadeFarClipPlanes,SHADOW_MAP_NUM_CASCADES,SHADOW_MAP_CASCADE_LAMBDA,pMatrixNearPlane,pMatrixFarPlane);
-
-        Helper_GetLightViewProjectionMatrices(lvpMatrices,cascadeFarClipPlanes,SHADOW_MAP_NUM_CASCADES,
+        Helper_GetLightViewProjectionMatricesExtra(lvpMatrices,gCascadeFarClipPlanes,SHADOW_MAP_NUM_CASCADES,
                                               vMatrixInverse,
                                               pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
                                               lightDirection,1.0f/(float)SHADOW_MAP_HEIGHT
-                                              //,0,0//,vMatrix
+                                              ,0,0
+                                              ,pMatrixInverseArray,shadowTextureViewportClippingArray
+                                              ,cameraFrustumCornersInLightNDCArray
+                                              ,0
                                               );
 
         // Draw to shadow map texture
         glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();glMatrixMode(GL_MODELVIEW);        // We'll set the combined light view-projection matrix in GL_MODELVIEW (do you know that it's the same?)
         glBindFramebuffer(GL_FRAMEBUFFER, shadowPass.fbo);
         glViewport(0, 0, SHADOW_MAP_WIDTH,SHADOW_MAP_HEIGHT);
-        glClear(GL_DEPTH_BUFFER_BIT);   // Clears all the shadow map
+#       ifdef VISUALIZE_DEPTH_TEXTURE // Optional
+        glClearDepth(0);glClear(GL_DEPTH_BUFFER_BIT);glClearDepth(1);   // All black
+#       endif //VISUALIZE_DEPTH_TEXTURE
+        //glClear(GL_DEPTH_BUFFER_BIT);  // All white
+        glEnable(GL_SCISSOR_TEST);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         glCullFace(GL_FRONT);
         glEnable(GL_DEPTH_CLAMP);
         glUseProgram(shadowPass.program);
         for (i=0;i<SHADOW_MAP_NUM_CASCADES;i++) {
-            glViewport(SHADOW_MAP_HEIGHT*i, 0, SHADOW_MAP_HEIGHT,SHADOW_MAP_HEIGHT);
+            glViewport(SHADOW_MAP_HEIGHT*i,0,SHADOW_MAP_HEIGHT,SHADOW_MAP_HEIGHT);
+            glScissor(SHADOW_MAP_HEIGHT*i+shadowTextureViewportClippingArray[4*i+0],shadowTextureViewportClippingArray[4*i+1],shadowTextureViewportClippingArray[4*i+2],shadowTextureViewportClippingArray[4*i+3]);
+            glClear(GL_DEPTH_BUFFER_BIT);   // Clear only viewportClipping (if GL_SCISSOR_TEST is enabled, otherwise everything)
             glPushMatrix();glLoadMatrixf(&lvpMatrices[i*16]); // we load both (light) projection and view matrices here (it's the same after all)
             Helper_GlutDrawGeometry(elapsedMs,cosAlpha,sinAlpha,targetPos,pgDisplayListBase);  // Done SHADOW_MAP_NUM_CASCADES times!
             glPopMatrix();
@@ -473,6 +527,7 @@ void DrawGL(void)
         glDisable(GL_DEPTH_CLAMP);
         glCullFace(GL_BACK);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDisable(GL_SCISSOR_TEST);
         glBindFramebuffer(GL_FRAMEBUFFER,0);
         glMatrixMode(GL_PROJECTION);glPopMatrix();glMatrixMode(GL_MODELVIEW);
 
@@ -493,7 +548,7 @@ void DrawGL(void)
         glBindTexture(GL_TEXTURE_2D,shadowPass.textureId);
         glUseProgram(defaultPass.program);
         glUniformMatrix4fv(defaultPass.uniform_location_biasedShadowMvpMatrix, SHADOW_MAP_NUM_CASCADES /*setting many matrices*/, GL_FALSE /*transpose?*/,biasedShadowMvpMatrices);
-        glUniform1fv(defaultPass.uniform_location_cascadeFarClippingPlane, SHADOW_MAP_NUM_CASCADES,cascadeFarClipPlanes);
+        glUniform1fv(defaultPass.uniform_location_cascadeFarClippingPlane, SHADOW_MAP_NUM_CASCADES,gCascadeFarClipPlanes);
         Helper_GlutDrawGeometry(elapsedMs,cosAlpha,sinAlpha,targetPos,pgDisplayListBase);
         glUseProgram(0);
         glBindTexture(GL_TEXTURE_2D,0);
@@ -537,6 +592,72 @@ void DrawGL(void)
         glBindTexture(GL_TEXTURE_2D,0);
         glDisable(GL_BLEND);
 		glEnable(GL_LIGHTING);
+
+#       ifndef VISUALIZE_DEPTH_TEXTURE_BUT_SKIP_CAMERA_FRUSTUM
+        {
+            int i,j;float alpha = 0.25f;
+            glDisable(GL_LIGHTING);
+            glEnable(GL_BLEND);
+            for (j=0;j<SHADOW_MAP_NUM_CASCADES;j++) {
+                const int si = j*8;
+                float hexts[2]  = {(0.25/current_aspect_ratio)*0.5,(0.25)*0.5};
+                float center[2] = {-1.0+2.0*hexts[0]*(float)j+hexts[0],(1.0+0.75)*0.5};
+                glBegin(GL_QUADS);
+                // Near plane
+                glColor4f(1,0,0,alpha);
+                for (i=si;i<si+4;i++)   glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                // Far plane
+                glColor4f(0,1,0,alpha);
+                for (i=si+4;i<si+8;i++)   glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                // Lateral Planes
+                glColor4f(1,1,0,alpha);
+                i=si+0;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+4;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+5;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+1;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                //
+                glColor4f(1,1,0,alpha);
+                i=si+1;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+5;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+6;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+2;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                //
+                glColor4f(1,1,0,alpha);
+                i=si+2;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+6;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+7;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+3;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                //
+                glColor4f(1,1,0,alpha);
+                i=si+3;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+7;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+4;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                i=si+0;glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                glEnd();
+                // Lines around near plane
+                glColor4f(0.5f,0,0,alpha);
+                glBegin(GL_LINE_LOOP);
+                for (i=si+0;i<si+4;i++)   glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                glEnd();
+                // Lines around far plane
+                glColor4f(0,0.5f,0,alpha);
+                glBegin(GL_LINE_LOOP);
+                for (i=si+4;i<si+8;i++)   glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                glEnd();
+                // Lateral Lines
+                glColor4f(0.5f,0.5f,0,alpha);
+                glBegin(GL_LINES);
+                for (i=si+0;i<si+4;i++)   {
+                    glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i][1]);
+                    glVertex2f(center[0]+hexts[0]*cameraFrustumCornersInLightNDCArray[i+4][0],center[1]+hexts[1]*cameraFrustumCornersInLightNDCArray[i+4][1]);
+                }
+                glEnd();
+            }
+            glDisable(GL_BLEND);
+            glEnable(GL_LIGHTING);
+        }
+#       endif //VISUALIZE_DEPTH_TEXTURE_BUT_SKIP_CAMERA_FRUSTUM
+
 
         glPopMatrix();
         glMatrixMode(GL_PROJECTION);

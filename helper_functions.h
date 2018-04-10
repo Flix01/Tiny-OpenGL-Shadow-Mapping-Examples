@@ -409,7 +409,7 @@ static __inline void Helper_GetFrustumAabbCenterAndHalfExtents(hloat* __restrict
     }
 }
 
-// 'optionalPMatrixInverse16' is REQUIRED only if you need to retrieve the arguments that follow it (otherwise program crashes).
+// 'optionalPMatrixInverse16' is required only if you need to retrieve (one or more of) the arguments that follow it (otherwise their value is untouched).
 static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict lvpMatrixOut16,
                                                           const hloat* __restrict cameraVMatrixInverse16,
                                                           hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
@@ -523,6 +523,11 @@ static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict 
                optionalLightViewportClippingOut4[i]/=texelIncrement;    // viewport is in [0,texture_size]
             }
 
+            /*optionalLightViewportClippingOut4[0] = floor(optionalLightViewportClippingOut4[0]);
+            optionalLightViewportClippingOut4[1] = floor(optionalLightViewportClippingOut4[1]);
+            optionalLightViewportClippingOut4[2] = ceil(optionalLightViewportClippingOut4[2]);
+            optionalLightViewportClippingOut4[3] = ceil(optionalLightViewportClippingOut4[3]);*/
+
             //fprintf(stderr,"viewport={%1.4f,%1.4f,%1.4f,%1.4f}\n",optionalLightViewportClippingOut4[0],optionalLightViewportClippingOut4[1],optionalLightViewportClippingOut4[2],optionalLightViewportClippingOut4[3]);
         }
 
@@ -567,14 +572,24 @@ static __inline  void Helper_GetCascadeFarPlaneArray(hloat*  __restrict cascadeF
         //fprintf(stderr,"cascadeSplits[%d] = %1.4f\tcascadeFarPlanesArrayOut[%d] = %1.4f\n",i,cascadeSplit,i,cascadeFarPlanesArrayOut[i]);
     }
 }
-static __inline  void Helper_GetLightViewProjectionMatrices(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeFarPlanesArray,int numCascades,
-                                                          const hloat*  __restrict cameraPosition3,
-                                                          const hloat*  __restrict cameraForwardDirection3,
+
+/* 'cascadeFarPlanesArray' must be an array of numCascades hloats
+* 'optionalCameraPMatrixInverseArray' is required only if you need to retrieve (one or more of) the arguments that follow it (otherwise their value is untouched).
+* 'optionalCameraPMatrixInverseArray'  (if used) must be an array of 16*numCascades hloats (basically one camera pMatrixInverse per cascade, because the near and far planes change)
+* 'optionalLightViewportClippingArrayOut' (if used) must be an array of 4*numCascades hloats
+* 'optionalCameraFrustumPointsInNDCLightSpaceArrayOut' (if used) must be an array of [8*numCascades][4] hloat
+* 'optionalLVPMatrixForFrustumCullingUsageArrayOut' (if used must contain 16*numCascades hloats*/
+static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeFarPlanesArray,int numCascades,
+                                                          const hloat* __restrict cameraVMatrixInverse16,
                                                           hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement
-                                                          //,hloat* __restrict optionalCascadeSphereCenterPlanesOut,hloat* __restrict optionalCascadeSphereRadiiSquaredOut
-                                                          //, const hloat* __restrict optionalCameraVMatrix16
+                                                          ,hloat* __restrict optionalCascadeSphereCenterPlanesOut,hloat* __restrict optionalCascadeSphereRadiiSquaredOut
+                                                          ,const hloat* __restrict optionalCameraPMatrixInverseArray
+                                                          ,hloat* __restrict optionalLightViewportClippingArrayOut,hloat optionalCameraFrustumPointsInNDCLightSpaceArrayOut[][4]
+                                                          ,hloat* __restrict optionalLVPMatrixForFrustumCullingUsageArrayOut   // Highly experimental and untested
                                                           )  {
+    const hloat cameraPosition3[3] = {cameraVMatrixInverse16[12],cameraVMatrixInverse16[13],cameraVMatrixInverse16[14]};
+    const hloat cameraForwardDirection3[3] = {-cameraVMatrixInverse16[8],-cameraVMatrixInverse16[9],-cameraVMatrixInverse16[10]};
     int cascadeIterator,i;
     // fovx = 2 * atan(aspect*tan(fovy/2))
     // tan(fovx/2) = aspect*tan(fovy/2)
@@ -601,52 +616,13 @@ static __inline  void Helper_GetLightViewProjectionMatrices(hloat* __restrict lv
         radius = (tanFovDiagonalSquared*frustumFarClippingPlane*frustumFarClippingPlane) + (frustumFarClippingPlane-frustumCenterDistance)*(frustumFarClippingPlane-frustumCenterDistance);
         //radius2 = (tanFovDiagonalSquared*frustumNearClippingPlane*frustumNearClippingPlane) + (frustumNearClippingPlane-frustumCenterDistance)*(frustumNearClippingPlane-frustumCenterDistance);if (radius<radius2) radius = radius2;
 
-        //if (optionalCascadeSphereCenterPlanesOut) optionalCascadeSphereCenterPlanesOut[cascadeIterator] = frustumCenterDistance;
-        //if (optionalCascadeSphereRadiiSquaredOut) optionalCascadeSphereRadiiSquaredOut[cascadeIterator] = radius;
+        if (optionalCascadeSphereCenterPlanesOut) optionalCascadeSphereCenterPlanesOut[cascadeIterator] = frustumCenterDistance;
+        if (optionalCascadeSphereRadiiSquaredOut) optionalCascadeSphereRadiiSquaredOut[cascadeIterator] = radius;
 
         radius = sqrt(radius);  // Mandatory
 
-        // ------------------------------------------------------------------------------------------------------
-        /*
-        // Or: https://lxjk.github.io/2017/04/15/Calculate-Minimal-Bounding-Sphere-of-Frustum.html (it uses fovx)-
-        if (tanFovDiagonalSquared>=(frustumFarClippingPlane-frustumNearClippingPlane)/(frustumFarClippingPlane+frustumNearClippingPlane)) {frustumCenterDistance=frustumFarClippingPlane;radius=frustumFarClippingPlane*sqrt(tanFovDiagonalSquared);}
-        else {
-            frustumCenterDistance = halfNearFarClippingPlane*(1.0+tanFovDiagonalSquared);
-            radius = 0.5 * sqrt((frustumFarClippingPlane-frustumNearClippingPlane)*(frustumFarClippingPlane-frustumNearClippingPlane)+
-                                2.0*(frustumFarClippingPlane*frustumFarClippingPlane+frustumNearClippingPlane*frustumNearClippingPlane)*tanFovDiagonalSquared+
-                                (frustumFarClippingPlane+frustumNearClippingPlane)*(frustumFarClippingPlane+frustumNearClippingPlane)*tanFovDiagonalSquared*tanFovDiagonalSquared
-                                );
-        }
-        //--------------------------------------------------------------------------------------------------------
-        */
-
         for (i=0;i<3;i++) frustumCenter[i] = cameraPosition3[i]+cameraForwardDirection3[i]*frustumCenterDistance;
         //fprintf(stderr,"cascade[%d] radius=%1.4f frustumCenterDistance=%1.4f nearPlane=%1.4f farPlane = %1.4f fovy = %1.0f cameraAspectRatio = %1.3f\n",cascadeIterator,radius,frustumCenterDistance,frustumNearClippingPlane,frustumFarClippingPlane,cameraFovyDeg,cameraAspectRatio);
-
-        /*if (optionalCameraVMatrix16) {
-            // Dbg only [To check that all frustum corners distances from frustumCenter should be equal if we comment out line (***) above]
-            int j;
-            hloat distance = 0,radius_cmp = 0;hloat distances[3] = {0,0,0};
-            hloat cameraVPMatrixInv[16],camerapMatrix[16];hloat fustumPoints[8][4];
-            Helper_Perspective(camerapMatrix,cameraFovyDeg,cameraAspectRatio,frustumNearClippingPlane,frustumFarClippingPlane);
-            Helper_MultMatrix(cameraVPMatrixInv,camerapMatrix,optionalCameraVMatrix16);
-            Helper_InvertMatrix(cameraVPMatrixInv,cameraVPMatrixInv);
-            Helper_GetFrustumPoints(fustumPoints,cameraVPMatrixInv);
-
-            // Get Max distance (for sure in perspective cameras, it's when i=4 or 5 or 6 or 7: the same max distance should be found)
-            fprintf(stderr,"cascade[%d] corner distances:\t",cascadeIterator);
-            for (i = 0; i < 8; i++) {
-                for (j=0;j<3;j++) {
-                    distances[j] = (fustumPoints[i][j] - frustumCenter[j]);
-                    distances[j]*=distances[j];
-                }
-                distance = distances[0]+distances[1]+distances[2];  // squared
-                if (radius_cmp < distance) radius_cmp = distance;           // squared
-                fprintf(stderr,"%1.3f ",sqrt(distance));
-            }
-            radius_cmp = sqrt(radius_cmp);
-            fprintf(stderr,"\tradius_cmp=%1.6f (radius=%1.6f)\n",radius_cmp,radius);
-        }*/
 
         // Shadow swimming happens when: 1) camera translates; 2) camera rotates; 3) objects move or rotate
         // AFAIK Shadow swimming (3) can't be fixed in any way
@@ -683,8 +659,79 @@ static __inline  void Helper_GetLightViewProjectionMatrices(hloat* __restrict lv
             lvpMatrixOut16[12]+= roundOffset[0];
             lvpMatrixOut16[13]+= roundOffset[1];
         }
+
+        // Extra stuff [Not sure code is correct: the returned viewport seems too big!]
+        if (optionalCameraPMatrixInverseArray) {
+            int j;
+            hloat cameraVPMatrixInverseAdjusted[16];hloat frustumPoints[8][4];
+            hloat minVal[3],maxVal[3],tmp;
+
+            Helper_MultMatrix(cameraVPMatrixInverseAdjusted,cameraVMatrixInverse16,&optionalCameraPMatrixInverseArray[16*cascadeIterator]);
+            // If we call Helper_GetFrustumPoints(frustumPoints,cameraVPMatrixInverseAdjusted) we find the frustum corners in world space
+
+            Helper_MultMatrix(cameraVPMatrixInverseAdjusted,lvpMatrixOut16,cameraVPMatrixInverseAdjusted);  // This way we 'should' get all points in the [-1,1] light NDC space (or not?)
+            Helper_GetFrustumPoints(frustumPoints,cameraVPMatrixInverseAdjusted);
+
+            if (optionalCameraFrustumPointsInNDCLightSpaceArrayOut) {
+                for (i=0;i<8;i++)   {
+                    for (j=0;j<4;j++)   {
+                        optionalCameraFrustumPointsInNDCLightSpaceArrayOut[cascadeIterator*8+i][j] = frustumPoints[i][j];
+                    }
+                }
+            }
+
+            // Calculate 'minVal' and 'maxVal' based on 'frustumPoints'
+            for (i=0;i<3;i++)   minVal[i]=maxVal[i]=frustumPoints[0][i];
+            for (i=1;i<8;i++)   {
+                for (j=0;j<3;j++)   {   // We will actually skip the z component later...
+                    tmp = frustumPoints[i][j];
+                    if      (minVal[j]>tmp) minVal[j]=tmp;
+                    else if (maxVal[j]<tmp) maxVal[j]=tmp;
+                }
+                //fprintf(stderr,"cascade:%d: frustumPoints[%d]={%1.4f,%1.4f,%1.4f}\n",cascadeIterator,i,frustumPoints[i][0], frustumPoints[i][1], frustumPoints[i][2]);
+            }
+
+            if (optionalLightViewportClippingArrayOut)   {
+                hloat* viewportClipping = &optionalLightViewportClippingArrayOut[cascadeIterator*4];
+                viewportClipping[0] = minVal[0]*0.5+0.5;        // In [0,1] from [-1,1]
+                viewportClipping[1] = minVal[1]*0.5+0.5;        // In [0,1] from [-1,1]
+                viewportClipping[2] = (maxVal[0]-minVal[0])*0.5;// extent x in [0,1]
+                viewportClipping[3] = (maxVal[1]-minVal[1])*0.5;// extent y in [0,1]
+
+                for (i=0;i<4;i++)   {
+                    viewportClipping[i]/=texelIncrement;    // viewport is in [0,texture_size]
+                }
+
+                /*viewportClipping[0] = floor(viewportClipping[0]);
+                viewportClipping[1] = floor(viewportClipping[1]);
+                viewportClipping[2] = ceil(viewportClipping[2]);
+                viewportClipping[3] = ceil(viewportClipping[3]);*/
+
+                //fprintf(stderr,"cascade:%d: viewportClipping={%1.4f,%1.4f,%1.4f,%1.4f}\n",cascadeIterator,viewportClipping[0],viewportClipping[1],viewportClipping[2],viewportClipping[3]);
+            }
+
+            if (optionalLVPMatrixForFrustumCullingUsageArrayOut)   {
+                hloat* plvpMatrixForFrustumCullingOut = &optionalLVPMatrixForFrustumCullingUsageArrayOut[cascadeIterator*16];
+                // Experimental: never tested
+                Helper_Ortho(plvpMatrixForFrustumCullingOut,
+                             minVal[0]*radius,maxVal[0]*radius,
+                        minVal[1]*radius,maxVal[1]*radius,
+                        0,-2.0*radius                      // For z, we just copy Helper_Ortho(lpMatrix,...) [Actually we remove the hack for nearVal]
+                        );
+                Helper_MultMatrix(plvpMatrixForFrustumCullingOut,plvpMatrixForFrustumCullingOut,lvMatrix);
+                // we don't apply the shadow swimming rotational fix for the frustum culling usage (should we ?)
+            }
+        }
+
     }
 }
+static __inline  void Helper_GetLightViewProjectionMatrices(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeFarPlanesArray,int numCascades,
+                                                          const hloat* __restrict cameraVMatrixInverse16,
+                                                          hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
+                                                          const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement) {
+    return Helper_GetLightViewProjectionMatricesExtra(lvpMatricesOut16,cascadeFarPlanesArray,numCascades,cameraVMatrixInverse16,cameraNearClippingPlane,cameraFarClippingPlane,cameraFovyDeg,cameraAspectRatio,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
+}
+
 static __inline void Helper_Min3(hloat* __restrict res3,const hloat* a3,const hloat* b3) {
     int i;for (i=0;i<3;i++) res3[i]=a3[i]<b3[i]?a3[i]:b3[i];
 }

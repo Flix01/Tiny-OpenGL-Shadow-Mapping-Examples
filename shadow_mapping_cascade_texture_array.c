@@ -490,15 +490,11 @@ void DrawGL(void)
 
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
-        float cameraPosition[3] =           {vMatrixInverse[12],vMatrixInverse[13],vMatrixInverse[14]};
-        float cameraForwardDirection[3] =   {-vMatrixInverse[8],-vMatrixInverse[9],-vMatrixInverse[10]};
-
-
         // This only changes with lambda, and camera near and far planes (so it can safely be calculated just once):
         Helper_GetCascadeFarPlaneArray(cascadeFarClipPlanes,SHADOW_MAP_NUM_CASCADES,SHADOW_MAP_CASCADE_LAMBDA,pMatrixNearPlane,pMatrixFarPlane);
 
         Helper_GetLightViewProjectionMatrices(lvpMatrices,cascadeFarClipPlanes,SHADOW_MAP_NUM_CASCADES,
-                                              cameraPosition,cameraForwardDirection,
+                                              vMatrixInverse,
                                               pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
                                               lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION);
 
