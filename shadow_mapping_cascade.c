@@ -268,6 +268,8 @@ static const char* DefaultPassVertexShader[] = {
     "varying vec4 v_vertexModelViewSpace;"
     "varying float v_clipSpacePosZ;"
     "\n"
+    "uniform float u_nearClippingPlane;\n"
+    "\n"
     "void main()	{\n"
     "	gl_Position = ftransform();\n"
     "\n"
@@ -279,7 +281,7 @@ static const char* DefaultPassVertexShader[] = {
     "	gl_FrontColor = gl_Color;\n"
     "\n"
     "   v_vertexModelViewSpace = gl_ModelViewMatrix*gl_Vertex;\n"
-    "   v_clipSpacePosZ = gl_Position.z;\n"
+    "   v_clipSpacePosZ = gl_Position.z+u_nearClippingPlane;\n" // v_clipSpacePosZ is the distance taken from the near plane. In the fragment shader we compare it with distances taken from the camera position. So e must add the near plane.
     "}\n"
 };
 static const char* DefaultPassFragmentShader[] = {
@@ -330,6 +332,7 @@ typedef struct {
     GLint uniform_location_shadowMap;
     GLint uniform_location_shadowDarkening;
     GLint uniform_location_cascadeFarClippingPlane;
+    GLint uniform_location_nearClippingPlane;
 } DefaultPass;
 
 DefaultPass defaultPass;
@@ -339,10 +342,12 @@ void InitDefaultPass(DefaultPass* dp)	{
     dp->uniform_location_shadowMap = glGetUniformLocation(dp->program,"u_shadowMap");
     dp->uniform_location_shadowDarkening = glGetUniformLocation(dp->program,"u_shadowDarkening");
     dp->uniform_location_cascadeFarClippingPlane = glGetUniformLocation(dp->program,"u_cascadeFarClippingPlane");
+    dp->uniform_location_nearClippingPlane = glGetUniformLocation(dp->program,"u_nearClippingPlane");
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
     glUniform2f(dp->uniform_location_shadowDarkening,80.0,0.45);	// Default values are (40.0f,0.75f) in [0-80] and [0-1]
+    glUniform1f(dp->uniform_location_nearClippingPlane,pMatrixNearPlane);	// Default values are (40.0f,0.75f) in [0-80] and [0-1]
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, SHADOW_MAP_NUM_CASCADES /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
     //glUniform1fv(dp->uniform_location_cascadeFarClippingPlane,SHADOW_MAP_NUM_CASCADES,gCascadeEndClipPlane);
     glUseProgram(0);

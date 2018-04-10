@@ -2,17 +2,12 @@
 //
 // This demo is the extension of shadow_mapping_advanced.c to cascaded shadow maps.
 //
-// As you can see there are PLENTY of artifacts!
+// As you can see there are some minor artifacts every now and then.
 //
-// To be honest both shadow_mapping_cascade.c and shadow_mapping_cascade_texture_array.c
-// are buggy themselves... (and to alleviate their effect, in Helper_GetLightViewProjectionMatricesExtra(...)
-// I made a (wrong) correction on the nearVal ortho matrix of the first split).
-//
-// However here the situation is much worse... the 'optimal texture viewport' does not work
-// as expected and its black frame gets projected to the screen every now and then.
-//
-// Not sure how to fix this issue... but for sure we should fix the artifacts in plain
-// shadow_mapping_cascade.c and shadow_mapping_cascade_texture_array.c before this.
+// However I think that the same artifacts are present in both shadow_mapping_cascade.c
+// and shadow_mapping_cascade_texture_array.c too. Here they are more evident just because
+// we darken the borders of the texture map to display it better at the top of the screen.
+// If we don't do it, I guess the artifacts stay the same and are less noticeable.
 //
 // As usual, feel free to post fixes/suggestions/pull requests here:
 // https://github.com/Flix01/Tiny-OpenGL-Shadow-Mapping-Examples
@@ -298,6 +293,8 @@ static const char* DefaultPassVertexShader[] = {
     "varying vec4 v_vertexModelViewSpace;"
     "varying float v_clipSpacePosZ;"
     "\n"
+    "uniform float u_nearClippingPlane;\n"
+    "\n"
     "void main()	{\n"
     "	gl_Position = ftransform();\n"
     "\n"
@@ -309,7 +306,7 @@ static const char* DefaultPassVertexShader[] = {
     "	gl_FrontColor = gl_Color;\n"
     "\n"
     "   v_vertexModelViewSpace = gl_ModelViewMatrix*gl_Vertex;\n"
-    "   v_clipSpacePosZ = gl_Position.z;\n"
+    "   v_clipSpacePosZ = gl_Position.z+u_nearClippingPlane;\n" // v_clipSpacePosZ is the distance taken from the near plane. In the fragment shader we compare it with distances taken from the camera position. So e must add the near plane.
     "}\n"
 };
 static const char* DefaultPassFragmentShader[] = {
@@ -360,6 +357,7 @@ typedef struct {
     GLint uniform_location_shadowMap;
     GLint uniform_location_shadowDarkening;
     GLint uniform_location_cascadeFarClippingPlane;
+    GLint uniform_location_nearClippingPlane;
 } DefaultPass;
 
 DefaultPass defaultPass;
@@ -369,10 +367,12 @@ void InitDefaultPass(DefaultPass* dp)	{
     dp->uniform_location_shadowMap = glGetUniformLocation(dp->program,"u_shadowMap");
     dp->uniform_location_shadowDarkening = glGetUniformLocation(dp->program,"u_shadowDarkening");
     dp->uniform_location_cascadeFarClippingPlane = glGetUniformLocation(dp->program,"u_cascadeFarClippingPlane");
+    dp->uniform_location_nearClippingPlane = glGetUniformLocation(dp->program,"u_nearClippingPlane");
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
     glUniform2f(dp->uniform_location_shadowDarkening,80.0,0.45);	// Default values are (40.0f,0.75f) in [0-80] and [0-1]
+    glUniform1f(dp->uniform_location_nearClippingPlane,pMatrixNearPlane);	// Default values are (40.0f,0.75f) in [0-80] and [0-1]
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, SHADOW_MAP_NUM_CASCADES /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
     //glUniform1fv(dp->uniform_location_cascadeFarClippingPlane,SHADOW_MAP_NUM_CASCADES,gCascadeEndClipPlane);
     glUseProgram(0);

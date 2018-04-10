@@ -630,7 +630,7 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
         //if (cascadeIterator == numCascades-1) maxRadius = radius;
 
         // Get light matrices
-        Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,cascadeIterator==0 ? (2.0*radius) : 0.0,-2.0*radius); // maybe here we can use farVal (last arg) as radius (or maxRadius).
+        Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,0.0,-2.0*radius); // maybe here we can use farVal (last arg) as radius (or maxRadius).
                                                                                                                    // also note that nearVal should be 0, but when radius is small (first cascades) it can produce artifacts (don't ask me why).
         Helper_LookAt(lvMatrix,
                 frustumCenter[0]-normalizedLightDirection3[0]*radius,    // eye[0]
@@ -716,7 +716,7 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
                 Helper_Ortho(plvpMatrixForFrustumCullingOut,
                              minVal[0]*radius,maxVal[0]*radius,
                         minVal[1]*radius,maxVal[1]*radius,
-                        0,-2.0*radius                      // For z, we just copy Helper_Ortho(lpMatrix,...) [Actually we remove the hack for nearVal]
+                        0,-2.0*radius                      // For z, we just copy Helper_Ortho(lpMatrix,...)
                         );
                 Helper_MultMatrix(plvpMatrixForFrustumCullingOut,plvpMatrixForFrustumCullingOut,lvMatrix);
                 // we don't apply the shadow swimming rotational fix for the frustum culling usage (should we ?)
