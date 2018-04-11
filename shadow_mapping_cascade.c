@@ -314,8 +314,9 @@ static const char* DefaultPassFragmentShader[] = {
     "	// Figure out which cascade to sample from\n"
     "   int cascadeIdx = NUM_CASCADES-1;\n"
     "   for(int i=NUM_CASCADES-1;i>0;--i)  {\n"
-    "       if (v_clipSpacePosZ < u_cascadeNearAndFarClippingPlanes[i])  cascadeIdx=i-1;\n"
-    "   }\n"
+    "       //if (v_clipSpacePosZ < u_cascadeNearAndFarClippingPlanes[i])  cascadeIdx=i-1;\n"
+    "       cascadeIdx-=max(sign(u_cascadeNearAndFarClippingPlanes[i] - v_clipSpacePosZ), 0.0);\n"  // branchless!
+   "   }\n"
     "\n"
     "   vec4 lightSpacePos = u_biasedShadowMvpMatrix[cascadeIdx]*v_vertexModelViewSpace;\n"   // There's a hidden vMatrixInverseCamera multiplication that removes the view component, moving the mMatrix from the camera space to the light space
     "   float shadowFactor = CalcShadowFactor(cascadeIdx, lightSpacePos);\n"

@@ -556,25 +556,28 @@ static __inline void Helper_GetLightViewProjectionMatrix(hloat* __restrict lvpMa
 }
 
 
-// Warning: 'cascadeNearAndFarPlanesArrayOut' must contain 'numCascades+1' elements
+// Warning: 'cascadeNearAndFarPlanesArrayOut' (and 'optionalCascadeNearAndFarPlanesInClipSpaceArrayOut' if used) must contain 'numCascades+1' elements
 // (returned cascadeNearAndFarPlanesArrayOut[0]==cameraNearClippingPlane and cascadeNearAndFarPlanesArrayOut[numCascades]==cameraFarClippingPlane)
-static __inline  void Helper_GetCascadeNearAndFarClippingPlaneArray(hloat*  __restrict cascadeNearAndFarPlanesArrayOut,int numCascades,hloat lambda,hloat cameraNearClippingPlane,hloat cameraFarClippingPlane) {
+static __inline  void Helper_GetCascadeNearAndFarClippingPlaneArray(hloat*  __restrict cascadeNearAndFarPlanesArrayOut,int numCascades,hloat lambda,hloat cameraNearClippingPlane,hloat cameraFarClippingPlane
+                                                                    //,hloat* __restrict optionalCascadeNearAndFarPlanesInClipSpaceArrayOut
+                                                                    ) {
     int i;
     cascadeNearAndFarPlanesArrayOut[0]=cameraNearClippingPlane;
-    //if (cascadeNearAndFarPlanesInClipSpaceArrayOut) cascadeNearAndFarPlanesInClipSpaceArrayOut[0] = 0;
+    //if (optionalCascadeNearAndFarPlanesInClipSpaceArrayOut) optionalCascadeNearAndFarPlanesInClipSpaceArrayOut[0] = 0;
     for (i=0;i<numCascades;i++) {
         hloat p = (float)(i+1)/(float)(numCascades);
         hloat logValue = cameraNearClippingPlane * pow(cameraFarClippingPlane/cameraNearClippingPlane, p);
         hloat uniformValue = cameraNearClippingPlane + (cameraFarClippingPlane-cameraNearClippingPlane)*p;
         hloat d = lambda*(logValue-uniformValue)+uniformValue;
-        // Far clip planes in (0,1]
+        // cascadeSplit: clip planes in (0,1]. This is converted from Direct3D... maybe in OpenGL they should be in [-1,1]... in any case we don't return these directly ATM.
         hloat cascadeSplit = (d-cameraNearClippingPlane)/(cameraFarClippingPlane-cameraNearClippingPlane);
-        //if (cascadeNearAndFarPlanesInClipSpaceArrayOut) cascadeNearAndFarPlanesInClipSpaceArrayOut[i+1] = cascadeSplit;
+        //if (optionalCascadeNearAndFarPlanesInClipSpaceArrayOut) optionalCascadeNearAndFarPlanesInClipSpaceArrayOut[i+1] = cascadeSplit;
         // Store cascadeFarPlanesArrayOut in OpenGL units in (cameraNearClippingPlane,cameraFarClippingPlane]
         cascadeNearAndFarPlanesArrayOut[i+1] = (cameraNearClippingPlane + cascadeSplit * (cameraFarClippingPlane - cameraNearClippingPlane));
-        //fprintf(stderr,"cascadeSplits[%d] = %1.4f\tcascadeNearAndFarPlanesArrayOut[%d] = %1.4f\n",i+1,cascadeSplit,i+1,cascadeNearAndFarPlanesArrayOut[i+1]);
+        fprintf(stderr,"cascadeSplits[%d] = %1.4f\tcascadeNearAndFarPlanesArrayOut[%d] = %1.4f\n",i+1,cascadeSplit,i+1,cascadeNearAndFarPlanesArrayOut[i+1]);
     }
     cascadeNearAndFarPlanesArrayOut[numCascades]=cameraFarClippingPlane;    // redundant
+    //if (optionalCascadeNearAndFarPlanesInClipSpaceArrayOut) optionalCascadeNearAndFarPlanesInClipSpaceArrayOut[numCascades] = 1.0; // redundant
 }
 
 /* 'cascadeNearAndFarPlanesArray' must be an array of numCascades+1 hloats
