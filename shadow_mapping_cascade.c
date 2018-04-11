@@ -194,6 +194,10 @@ const float pMatrixFovyDeg = 45.f;
 const float pMatrixNearPlane = 0.5f;
 const float pMatrixFarPlane = 20.0f;
 
+// we calculate these in ResizeGL(...)
+float gCascadeNearAndFarClippingPlanes[SHADOW_MAP_NUM_CASCADES+1];  // Array of the clipping planes of each cascade (gCascadeNearAndFarClippingPlanes[0]==pMatrixNearPlane and gCascadeNearAndFarClippingPlanes[SHADOW_MAP_NUM_CASCADES]==pMatrixFarPlane)
+
+
 float instantFrameTime = 16.2f;
 
 // Optional (to speed up Helper_GlutDrawGeometry(...) a bit)
@@ -263,12 +267,13 @@ void DestroyShadowPass(ShadowPass* sp)	{
 
 
 static const char* DefaultPassVertexShader[] = {
+    "#define NUM_CASCADES "SHADOW_MAP_NUM_CASCADES_STRING"\n"
     "varying vec4 v_diffuse;\n"
     "\n"    // New
     "varying vec4 v_vertexModelViewSpace;"
     "varying float v_clipSpacePosZ;"
     "\n"
-    "uniform float u_nearClippingPlane;\n"
+    "uniform float u_cascadeNearAndFarClippingPlanes[NUM_CASCADES+1];\n"
     "\n"
     "void main()	{\n"
     "	gl_Position = ftransform();\n"
@@ -281,7 +286,7 @@ static const char* DefaultPassVertexShader[] = {
     "	gl_FrontColor = gl_Color;\n"
     "\n"
     "   v_vertexModelViewSpace = gl_ModelViewMatrix*gl_Vertex;\n"
-    "   v_clipSpacePosZ = gl_Position.z+u_nearClippingPlane;\n" // v_clipSpacePosZ is the distance taken from the near plane. In the fragment shader we compare it with distances taken from the camera position. So e must add the near plane.
+    "   v_clipSpacePosZ = gl_Position.z+u_cascadeNearAndFarClippingPlanes[0];\n" // v_clipSpacePosZ is the distance taken from the near plane. In the fragment shader we compare it with distances taken from the camera position. So e must add the near plane.
     "}\n"
 };
 static const char* DefaultPassFragmentShader[] = {
@@ -294,7 +299,7 @@ static const char* DefaultPassFragmentShader[] = {
     "uniform vec2 u_shadowDarkening;\n" // .x = fDarkeningFactor [10.0-80.0], .y = min value clamp [0.0-1.0]
     "varying vec4 v_diffuse;\n"
     "\n"
-    "uniform float u_cascadeFarClippingPlane[NUM_CASCADES];\n"
+    "uniform float u_cascadeNearAndFarClippingPlanes[NUM_CASCADES+1];\n"
     "uniform mat4 u_biasedShadowMvpMatrix[NUM_CASCADES];\n" // Actually they are: (u_biasedShadowMvpMatrix[NUM_CASCADES] * vMatrixInverseCamera) please see the code.
     "varying float v_clipSpacePosZ;"
     "varying vec4 v_vertexModelViewSpace;\n"
@@ -308,8 +313,8 @@ static const char* DefaultPassFragmentShader[] = {
     "void main() {\n"
     "	// Figure out which cascade to sample from\n"
     "   int cascadeIdx = NUM_CASCADES-1;\n"
-    "   for(int i=NUM_CASCADES-2;i>=0;--i)  {\n"
-    "       if (v_clipSpacePosZ < u_cascadeFarClippingPlane[i])  cascadeIdx=i;\n"
+    "   for(int i=NUM_CASCADES-1;i>0;--i)  {\n"
+    "       if (v_clipSpacePosZ < u_cascadeNearAndFarClippingPlanes[i])  cascadeIdx=i-1;\n"
     "   }\n"
     "\n"
     "   vec4 lightSpacePos = u_biasedShadowMvpMatrix[cascadeIdx]*v_vertexModelViewSpace;\n"   // There's a hidden vMatrixInverseCamera multiplication that removes the view component, moving the mMatrix from the camera space to the light space
@@ -331,8 +336,7 @@ typedef struct {
     GLint uniform_location_biasedShadowMvpMatrix;
     GLint uniform_location_shadowMap;
     GLint uniform_location_shadowDarkening;
-    GLint uniform_location_cascadeFarClippingPlane;
-    GLint uniform_location_nearClippingPlane;
+    GLint uniform_location_cascadeNearAndFarClippingPlanes;
 } DefaultPass;
 
 DefaultPass defaultPass;
@@ -341,15 +345,13 @@ void InitDefaultPass(DefaultPass* dp)	{
     dp->uniform_location_biasedShadowMvpMatrix = glGetUniformLocation(dp->program,"u_biasedShadowMvpMatrix");
     dp->uniform_location_shadowMap = glGetUniformLocation(dp->program,"u_shadowMap");
     dp->uniform_location_shadowDarkening = glGetUniformLocation(dp->program,"u_shadowDarkening");
-    dp->uniform_location_cascadeFarClippingPlane = glGetUniformLocation(dp->program,"u_cascadeFarClippingPlane");
-    dp->uniform_location_nearClippingPlane = glGetUniformLocation(dp->program,"u_nearClippingPlane");
+    dp->uniform_location_cascadeNearAndFarClippingPlanes = glGetUniformLocation(dp->program,"u_cascadeNearAndFarClippingPlanes");
 
     glUseProgram(dp->program);
     glUniform1i(dp->uniform_location_shadowMap,0);
     glUniform2f(dp->uniform_location_shadowDarkening,80.0,0.45);	// Default values are (40.0f,0.75f) in [0-80] and [0-1]
-    glUniform1f(dp->uniform_location_nearClippingPlane,pMatrixNearPlane);	// Default values are (40.0f,0.75f) in [0-80] and [0-1]
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, SHADOW_MAP_NUM_CASCADES /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
-    //glUniform1fv(dp->uniform_location_cascadeFarClippingPlane,SHADOW_MAP_NUM_CASCADES,gCascadeEndClipPlane);
+    //glUniform1fv(dp->uniform_location_cascadeNearAndFarClippingPlanes,SHADOW_MAP_NUM_CASCADES,gCascadeNearAndFarClippingPlanes);
     glUseProgram(0);
 }
 void DestroyDefaultPass(DefaultPass* dp)	{
@@ -365,7 +367,14 @@ void ResizeGL(int w,int h) {
         // We set our pMatrix
         Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
         glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
-	}
+
+        // Here we calculate the splits (gCascadeNearAndFarClippingPlanes must contain SHADOW_MAP_NUM_CASCADES+1 elements) based on lambda, and camera near and far planes:
+        Helper_GetCascadeNearAndFarClippingPlaneArray(gCascadeNearAndFarClippingPlanes,SHADOW_MAP_NUM_CASCADES,SHADOW_MAP_CASCADE_LAMBDA,pMatrixNearPlane,pMatrixFarPlane);
+        // Here we update the uniform 'u_cascadeNearAndFarClippingPlanes' in the default pass shader program
+        glUseProgram(defaultPass.program);
+        glUniform1fv(defaultPass.uniform_location_cascadeNearAndFarClippingPlanes, SHADOW_MAP_NUM_CASCADES,gCascadeNearAndFarClippingPlanes);
+        glUseProgram(0);
+    }
 
 
     if (w>0 && h>0 && !config.fullscreen_enabled) {
@@ -422,7 +431,6 @@ void DrawGL(void)
     static float vMatrixInverse[16];
     static float lvpMatrices[SHADOW_MAP_NUM_CASCADES*16];                 // = light_pMatrix*light_vMatrix
     static float biasedShadowMvpMatrices[SHADOW_MAP_NUM_CASCADES*16];     // multiplied per vMatrixInverse
-    static float cascadeFarClipPlanes[SHADOW_MAP_NUM_CASCADES];           // this should better be global... see below
 
     float elapsedMs;float cosAlpha,sinAlpha;    // used to move objects around
 
@@ -449,12 +457,9 @@ void DrawGL(void)
 
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
-        // This only changes with lambda, and camera near and far planes (so it can be safely  calculated just once at init time):
-        Helper_GetCascadeFarPlaneArray(cascadeFarClipPlanes,SHADOW_MAP_NUM_CASCADES,SHADOW_MAP_CASCADE_LAMBDA,pMatrixNearPlane,pMatrixFarPlane);
-
-        Helper_GetLightViewProjectionMatrices(lvpMatrices,cascadeFarClipPlanes,SHADOW_MAP_NUM_CASCADES,
+        Helper_GetLightViewProjectionMatrices(lvpMatrices,gCascadeNearAndFarClippingPlanes,SHADOW_MAP_NUM_CASCADES,
                                               vMatrixInverse,
-                                              pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
+                                              pMatrixFovyDeg,current_aspect_ratio,
                                               lightDirection,1.0f/(float)SHADOW_MAP_HEIGHT
                                               //,0,0//,vMatrix
                                               );
@@ -498,7 +503,6 @@ void DrawGL(void)
         glBindTexture(GL_TEXTURE_2D,shadowPass.textureId);
         glUseProgram(defaultPass.program);
         glUniformMatrix4fv(defaultPass.uniform_location_biasedShadowMvpMatrix, SHADOW_MAP_NUM_CASCADES /*setting many matrices*/, GL_FALSE /*transpose?*/,biasedShadowMvpMatrices);
-        glUniform1fv(defaultPass.uniform_location_cascadeFarClippingPlane, SHADOW_MAP_NUM_CASCADES,cascadeFarClipPlanes);
         Helper_GlutDrawGeometry(elapsedMs,cosAlpha,sinAlpha,targetPos,pgDisplayListBase);
         glUseProgram(0);
         glBindTexture(GL_TEXTURE_2D,0);

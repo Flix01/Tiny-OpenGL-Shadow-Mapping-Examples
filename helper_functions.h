@@ -552,13 +552,16 @@ static __inline void Helper_GetLightViewProjectionMatrix(hloat* __restrict lvpMa
                                                           const hloat* __restrict cameraVMatrixInverse16,
                                                           hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement)  {
-    return Helper_GetLightViewProjectionMatrixExtra(lvpMatrixOut16,cameraVMatrixInverse16,cameraNearClippingPlane,cameraFarClippingPlane,cameraFovyDeg,cameraAspectRatio,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
+    Helper_GetLightViewProjectionMatrixExtra(lvpMatrixOut16,cameraVMatrixInverse16,cameraNearClippingPlane,cameraFarClippingPlane,cameraFovyDeg,cameraAspectRatio,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
 }
 
 
-
-static __inline  void Helper_GetCascadeFarPlaneArray(hloat*  __restrict cascadeFarPlanesArrayOut,int numCascades,hloat lambda,hloat cameraNearClippingPlane,hloat cameraFarClippingPlane) {
+// Warning: 'cascadeNearAndFarPlanesArrayOut' must contain 'numCascades+1' elements
+// (returned cascadeNearAndFarPlanesArrayOut[0]==cameraNearClippingPlane and cascadeNearAndFarPlanesArrayOut[numCascades]==cameraFarClippingPlane)
+static __inline  void Helper_GetCascadeNearAndFarClippingPlaneArray(hloat*  __restrict cascadeNearAndFarPlanesArrayOut,int numCascades,hloat lambda,hloat cameraNearClippingPlane,hloat cameraFarClippingPlane) {
     int i;
+    cascadeNearAndFarPlanesArrayOut[0]=cameraNearClippingPlane;
+    //if (cascadeNearAndFarPlanesInClipSpaceArrayOut) cascadeNearAndFarPlanesInClipSpaceArrayOut[0] = 0;
     for (i=0;i<numCascades;i++) {
         hloat p = (float)(i+1)/(float)(numCascades);
         hloat logValue = cameraNearClippingPlane * pow(cameraFarClippingPlane/cameraNearClippingPlane, p);
@@ -566,22 +569,23 @@ static __inline  void Helper_GetCascadeFarPlaneArray(hloat*  __restrict cascadeF
         hloat d = lambda*(logValue-uniformValue)+uniformValue;
         // Far clip planes in (0,1]
         hloat cascadeSplit = (d-cameraNearClippingPlane)/(cameraFarClippingPlane-cameraNearClippingPlane);
-        //if (cascadeFarPlanesInClipSpaceArrayOut) cascadeFarPlanesInClipSpaceArrayOut[i] = cascadeSplit;
+        //if (cascadeNearAndFarPlanesInClipSpaceArrayOut) cascadeNearAndFarPlanesInClipSpaceArrayOut[i+1] = cascadeSplit;
         // Store cascadeFarPlanesArrayOut in OpenGL units in (cameraNearClippingPlane,cameraFarClippingPlane]
-        cascadeFarPlanesArrayOut[i] = (cameraNearClippingPlane + cascadeSplit * (cameraFarClippingPlane - cameraNearClippingPlane));
-        //fprintf(stderr,"cascadeSplits[%d] = %1.4f\tcascadeFarPlanesArrayOut[%d] = %1.4f\n",i,cascadeSplit,i,cascadeFarPlanesArrayOut[i]);
+        cascadeNearAndFarPlanesArrayOut[i+1] = (cameraNearClippingPlane + cascadeSplit * (cameraFarClippingPlane - cameraNearClippingPlane));
+        //fprintf(stderr,"cascadeSplits[%d] = %1.4f\tcascadeNearAndFarPlanesArrayOut[%d] = %1.4f\n",i+1,cascadeSplit,i+1,cascadeNearAndFarPlanesArrayOut[i+1]);
     }
+    cascadeNearAndFarPlanesArrayOut[numCascades]=cameraFarClippingPlane;    // redundant
 }
 
-/* 'cascadeFarPlanesArray' must be an array of numCascades hloats
+/* 'cascadeNearAndFarPlanesArray' must be an array of numCascades+1 hloats
 * 'optionalCameraPMatrixInverseArray' is required only if you need to retrieve (one or more of) the arguments that follow it (otherwise their value is untouched).
 * 'optionalCameraPMatrixInverseArray'  (if used) must be an array of 16*numCascades hloats (basically one camera pMatrixInverse per cascade, because the near and far planes change)
 * 'optionalLightViewportClippingArrayOut' (if used) must be an array of 4*numCascades hloats
 * 'optionalCameraFrustumPointsInNDCLightSpaceArrayOut' (if used) must be an array of [8*numCascades][4] hloat
 * 'optionalLVPMatrixForFrustumCullingUsageArrayOut' (if used must contain 16*numCascades hloats*/
-static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeFarPlanesArray,int numCascades,
+static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeNearAndFarPlanesArray,int numCascades,
                                                           const hloat* __restrict cameraVMatrixInverse16,
-                                                          hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
+                                                          hloat cameraFovyDeg,hloat cameraAspectRatio,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement
                                                           ,hloat* __restrict optionalCascadeSphereCenterPlanesOut,hloat* __restrict optionalCascadeSphereRadiiSquaredOut
                                                           ,const hloat* __restrict optionalCameraPMatrixInverseArray
@@ -599,8 +603,8 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
     tanFovDiagonalSquared*=tanFovDiagonalSquared;
     tanFovDiagonalSquared*=(1.0+cameraAspectRatio*cameraAspectRatio);
     for (cascadeIterator = numCascades-1; cascadeIterator >= 0; --cascadeIterator) {
-        hloat frustumNearClippingPlane = cascadeIterator == 0 ? cameraNearClippingPlane : cascadeFarPlanesArray[cascadeIterator - 1];
-        hloat frustumFarClippingPlane = cascadeFarPlanesArray[cascadeIterator];
+        hloat frustumNearClippingPlane = cascadeNearAndFarPlanesArray[cascadeIterator];
+        hloat frustumFarClippingPlane = cascadeNearAndFarPlanesArray[cascadeIterator+1];
         hloat frustumCenter[3] = {0,0,0};
         hloat radius = 0.0;//,radius2 = 0.0;
         hloat lpMatrix[16],lvMatrix[16];
@@ -630,8 +634,7 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
         //if (cascadeIterator == numCascades-1) maxRadius = radius;
 
         // Get light matrices
-        Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,0.0,-2.0*radius); // maybe here we can use farVal (last arg) as radius (or maxRadius).
-                                                                                                                   // also note that nearVal should be 0, but when radius is small (first cascades) it can produce artifacts (don't ask me why).
+        Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,0.0,-2.0*radius); // maybe here we can use farVal (last arg) as radius (or maxRadius).                                                                                        
         Helper_LookAt(lvMatrix,
                 frustumCenter[0]-normalizedLightDirection3[0]*radius,    // eye[0]
                 frustumCenter[1]-normalizedLightDirection3[1]*radius,    // eye[1]
@@ -725,11 +728,11 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
 
     }
 }
-static __inline  void Helper_GetLightViewProjectionMatrices(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeFarPlanesArray,int numCascades,
+static __inline  void Helper_GetLightViewProjectionMatrices(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeNearAndFarPlanesArray,int numCascades,
                                                           const hloat* __restrict cameraVMatrixInverse16,
-                                                          hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
+                                                          hloat cameraFovyDeg,hloat cameraAspectRatio,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement) {
-    return Helper_GetLightViewProjectionMatricesExtra(lvpMatricesOut16,cascadeFarPlanesArray,numCascades,cameraVMatrixInverse16,cameraNearClippingPlane,cameraFarClippingPlane,cameraFovyDeg,cameraAspectRatio,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
+    Helper_GetLightViewProjectionMatricesExtra(lvpMatricesOut16,cascadeNearAndFarPlanesArray,numCascades,cameraVMatrixInverse16,cameraFovyDeg,cameraAspectRatio,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
 }
 
 static __inline void Helper_Min3(hloat* __restrict res3,const hloat* a3,const hloat* b3) {
