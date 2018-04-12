@@ -269,13 +269,9 @@ void DestroyShadowPass(ShadowPass* sp)	{
 
 
 static const char* DefaultPassVertexShader[] = {
-    "#define NUM_CASCADES "SHADOW_MAP_NUM_CASCADES_STRING"\n"
     "varying vec4 v_diffuse;\n"
-    "\n"    // New
-    "varying vec4 v_vertexModelViewSpace;"
-    "varying float v_clipSpacePosZ;"
-    "\n"
-    "uniform float u_cascadeNearAndFarClippingPlanes[NUM_CASCADES+1];\n"
+    "varying vec4 v_vertexModelViewSpace;\n"
+    "varying float v_vertexModelViewSpaceDepth;\n"  // A bit redundant (we can calculate it in the fragment shader using v_vertexModelViewSpace)
     "\n"
     "void main()	{\n"
     "	gl_Position = ftransform();\n"
@@ -288,33 +284,39 @@ static const char* DefaultPassVertexShader[] = {
     "	gl_FrontColor = gl_Color;\n"
     "\n"
     "   v_vertexModelViewSpace = gl_ModelViewMatrix*gl_Vertex;\n"
-    "   v_clipSpacePosZ = gl_Position.z+u_cascadeNearAndFarClippingPlanes[0];\n" // v_clipSpacePosZ is the distance taken from the near plane. In the fragment shader we compare it with distances taken from the camera position. So e must add the near plane.
+    "   v_vertexModelViewSpaceDepth = -v_vertexModelViewSpace.z/v_vertexModelViewSpace.w;\n"  // Negative, because camera looks in the -z axis (and u_cascadeNearAndFarClippingPlanes[...] are all positive quantities)
     "}\n"
 };
 static const char* DefaultPassFragmentShader[] = {
-    "#define NUM_CASCADES "SHADOW_MAP_NUM_CASCADES_STRING"\n"
-    "#extension GL_EXT_texture_array : enable\n"
 #   ifdef VISUALIZE_CASCADE_SPLITS
-    "const vec3 dbgSplitColors[4] = {vec3(0.5,0.0,0.0),vec3(0.0,0.5,0.0),vec3(0.0,0.0,0.5),vec3(0.5,0.5,0.0)};\n"
+    "#version 120\n"
+    "#extension GL_EXT_texture_array : enable\n"
+    "#extension GL_EXT_gpu_shader4 : enable\n"
+    "#define NUM_CASCADES "SHADOW_MAP_NUM_CASCADES_STRING"\n"
+    "const vec3 dbgSplitColors[4] = vec3[4](vec3(0.5,0.0,0.0),vec3(0.0,0.5,0.0),vec3(0.0,0.0,0.5),vec3(0.5,0.5,0.0));\n"
+#   else //VISUALIZE_CASCADE_SPLITS
+    "#extension GL_EXT_texture_array : enable\n"
+    "#define NUM_CASCADES "SHADOW_MAP_NUM_CASCADES_STRING"\n"
 #   endif //VISUALIZE_CASCADE_SPLITS
-    "\n"    // New
+    "\n"
     "uniform sampler2DArray u_shadowMap;\n"
     "uniform vec2 u_shadowDarkening;\n" // .x = fDarkeningFactor [10.0-80.0], .y = min value clamp [0.0-1.0]
-    "varying vec4 v_diffuse;\n"
-    "\n"
     "uniform float u_cascadeNearAndFarClippingPlanes[NUM_CASCADES+1];\n"
     "uniform mat4 u_biasedShadowMvpMatrix[NUM_CASCADES];\n" // Actually they are: (u_biasedShadowMvpMatrix[NUM_CASCADES] * vMatrixInverseCamera) please see the code.
-    "varying float v_clipSpacePosZ;"
+    "\n"
+    "varying vec4 v_diffuse;\n"
     "varying vec4 v_vertexModelViewSpace;\n"
+    "varying float v_vertexModelViewSpaceDepth;\n"
     "\n"
     "void main() {\n"
     "	// Figure out which cascade to sample from\n"
-    "   int cascadeIdx = NUM_CASCADES-1;\n"
-    "   for(int i=NUM_CASCADES-1;i>0;--i)  {\n"
-    "       //if (v_clipSpacePosZ < u_cascadeNearAndFarClippingPlanes[i])  cascadeIdx=i-1;\n"
-    "       cascadeIdx-=max(sign(u_cascadeNearAndFarClippingPlanes[i] - v_clipSpacePosZ), 0.0);\n"  // branchless!
+    "   float cascadeIdxFloat = float(NUM_CASCADES-1);\n"
+    "   for(int i=1;i<NUM_CASCADES;i++)  {\n"
+    "       //if (v_vertexModelViewSpaceDepth < u_cascadeNearAndFarClippingPlanes[i]) cascadeIdxFloat-=1.0;\n"      // branch!
+    "       cascadeIdxFloat-=max(sign(u_cascadeNearAndFarClippingPlanes[i] - v_vertexModelViewSpaceDepth), 0.0);\n" // branchless!
     "   }\n"
     "\n"
+    "   int cascadeIdx = int(cascadeIdxFloat);\n"
     "   vec4 lightSpacePos = u_biasedShadowMvpMatrix[cascadeIdx]*v_vertexModelViewSpace;\n"   // There's a hidden vMatrixInverseCamera multiplication that removes the view component, moving the mMatrix from the camera space to the light space
     "   vec4 shadowCoordinateWdivide = lightSpacePos/lightSpacePos.w;\n"
     "   float shadowFactor = clamp(exp(u_shadowDarkening.x*(texture2DArray(u_shadowMap,vec3(shadowCoordinateWdivide.st,float(cascadeIdx))).r-shadowCoordinateWdivide.z)),u_shadowDarkening.y,1.0);\n"

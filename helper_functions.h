@@ -574,7 +574,7 @@ static __inline  void Helper_GetCascadeNearAndFarClippingPlaneArray(hloat*  __re
         //if (optionalCascadeNearAndFarPlanesInClipSpaceArrayOut) optionalCascadeNearAndFarPlanesInClipSpaceArrayOut[i+1] = cascadeSplit;
         // Store cascadeFarPlanesArrayOut in OpenGL units in (cameraNearClippingPlane,cameraFarClippingPlane]
         cascadeNearAndFarPlanesArrayOut[i+1] = (cameraNearClippingPlane + cascadeSplit * (cameraFarClippingPlane - cameraNearClippingPlane));
-        fprintf(stderr,"cascadeSplits[%d] = %1.4f\tcascadeNearAndFarPlanesArrayOut[%d] = %1.4f\n",i+1,cascadeSplit,i+1,cascadeNearAndFarPlanesArrayOut[i+1]);
+        //fprintf(stderr,"cascadeSplits[%d] = %1.4f\tcascadeNearAndFarPlanesArrayOut[%d] = %1.4f\n",i+1,cascadeSplit,i+1,cascadeNearAndFarPlanesArrayOut[i+1]);
     }
     cascadeNearAndFarPlanesArrayOut[numCascades]=cameraFarClippingPlane;    // redundant
     //if (optionalCascadeNearAndFarPlanesInClipSpaceArrayOut) optionalCascadeNearAndFarPlanesInClipSpaceArrayOut[numCascades] = 1.0; // redundant
