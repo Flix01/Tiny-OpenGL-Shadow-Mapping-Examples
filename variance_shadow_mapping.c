@@ -57,6 +57,10 @@ for glut.h, glew.h, etc. with something like:
 #define SHADOW_MAP_BLUR_KERNEL_SIZE 5   // 0 or 1 (=no blur);   3,  5,  9,   13  valid values (when SHADOW_MAP_BLUR_USING_BOX_FILTER is NOT defined)
 //#define SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION    // Otherwise linear step is used (cheaper?)
 
+//#define __EMSCRIPTEN__                                  // This is just a hack to use a 16bit texture format to save half of GPU memory (of course all these demos use the fixed function pipeline and can't work on emscripten as they are)
+                                                          // Also it needs a higher bias and lightBleedingReduction too (we auto-tweak the latter).
+//#define SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION     // Optimization for 2 moments proposed in http://cg.cs.uni-bonn.de/aigaion2root/attachments/MomentShadowMapping.pdf
+                                                         // [But differences are probably visible in 16-bit mode only, without using any light bleeding reduction...]
 
 // These path definitions can be passed to the compiler command-line
 #ifndef GLUT_PATH
@@ -95,6 +99,8 @@ for glut.h, glew.h, etc. with something like:
 #if (SHADOW_MAP_BLUR_KERNEL_SIZE==(SHADOW_MAP_BLUR_KERNEL_SIZE/2)*2)
 #   error SHADOW_MAP_BLUR_KERNEL_SIZE must be an odd number
 #endif
+
+
 
 #include "helper_functions.h"   // please search this .c file for "Helper_":
                                 // only very few of its functions are used.
@@ -216,20 +222,24 @@ static const char* ShadowPassVertexShader[] = {
 static const char* ShadowPassFragmentShader[] = {   // From http://fabiensanglard.net/shadowmappingVSM/index.php
     "varying vec4 v_position;\n"
     "\n"
+    "vec2 ComputeMoments(float FragmentDepth)    {\n"
+    "   vec2 mu = vec2(FragmentDepth,FragmentDepth*FragmentDepth);\n"
+    "   // Adjusting moments (this is sort of bias per pixel) using derivative\n"
+    "   // (However many implementations just skip these 3 lines)\n"
+    "   /*float dx = dFdx(FragmentDepth);\n"
+    "   float dy = dFdy(FragmentDepth);\n"
+    "   mu.y += 0.25*(dx*dx+dy*dy);*/\n"
+#   ifdef SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+    "   mu.y = 4.0*(mu.x-mu.y);\n"
+#   endif //SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+    "   return mu;\n"
+    "}\n"
+    "\n"
     "   void main() {\n"
     "       float depth = v_position.z/v_position.w;\n"
     "       depth = depth * 0.5 + 0.5;			//Don't forget to move away from unit cube ([-1,1]) to [0,1] coordinate system\n"
     "\n"
-    "       float moment1 = depth;\n"
-    "       float moment2 = depth * depth;\n"
-    "\n"
-    "       // Adjusting moments (this is sort of bias per pixel) using derivative\n"
-    "       // (However many implementations just skip these 3 lines)\n"
-    "       float dx = dFdx(depth);\n"
-    "       float dy = dFdy(depth);\n"
-    "       moment2 += 0.25*(dx*dx+dy*dy);\n"
-    "\n"
-    "       gl_FragColor = vec4(moment1,moment2, 0.0, 0.0);\n"
+    "       gl_FragColor = vec4(ComputeMoments(depth).xy,0.0,0.0);\n"
     "   }\n"
 };
 typedef struct {
@@ -326,7 +336,7 @@ static const char* DefaultPassVertexShader[] = {
 	"\n"	
     "	gl_FrontColor = gl_Color;\n"
     "\n"
-    "   v_shadowCoord = u_biasedShadowMvpMatrix*(gl_ModelViewMatrix*gl_Vertex);\n"  // (*) We don't pass a 'naked' mMatrix in shaders (not robust to double precision usage). We dress it in a mvMatrix. So here we're passing a mMatrix from camera space to light space (through a mvMatrix).
+    "   v_shadowCoord = u_biasedShadowMvpMatrix*(gl_ModelViewMatrix*gl_Vertex);\n"  // (*) We don't pass a 'naked' mMatrix to shaders (not robust to double precision usage). We dress it in a mvMatrix. So here we're passing a mMatrix from camera space to light space (through a mvMatrix).
     "}\n"                                                                           // (the bias just converts clip space to texture space)
 };
 static const char* DefaultPassFragmentShader[] = {
@@ -339,8 +349,7 @@ static const char* DefaultPassFragmentShader[] = {
     "	return clamp((v-low)/(high-low), 0.0, 1.0);\n"
     "}\n"
     "\n"
-    "float chebyshevUpperBound(vec2 texCoord,float distance) {\n"
-    "   vec2 moments = texture2D(u_shadowMap,texCoord).rg;\n"
+    "float chebyshevUpperBound(vec2 moments,float distance) {\n"
     "   // Surface is fully lit. as the current fragment is before the light occluder\n"
     "   if (distance <= moments.x)  return 1.0;\n"  // Can we remove this branch ?
     "\n"
@@ -352,17 +361,30 @@ static const char* DefaultPassFragmentShader[] = {
     "\n"
     "   float d = distance - moments.x;\n"
     "   float p_max = variance / (variance + d*d);\n"   // 0<p_max<1
-    "\n"
+    "\n" 
+#   ifdef SHADOW_MAP_TEST_TO_REMOVE // Attempt to handle half of LightBleedingReduction without hard-shadowing too much... (u_shadowLightBleedingReductionAndDarkening.x should be halved when this is enabled)
+    "   if (p_max>0.92) p_max*=p_max;\n"
+    "   p_max*=p_max;p_max*=p_max;\n"
+#   endif //SHADOW_MAP_TEST_TO_REMOVE
 #   ifdef SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
-    "   return smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n"
+    "   p_max = smoothstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n"
 #   else //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
-    "   return linstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n"
+    "   p_max = linstep(u_shadowLightBleedingReductionAndDarkening.x,1.0,p_max);\n"
 #   endif //SHADOW_MAP_USE_SMOOTHSTEP_FOR_LIGHT_BLEEDING_REDUCTION
+    "   return p_max;\n"
+    "}\n"
+    "\n"
+    "vec2 ConvertMoments(vec2 optimizedMoments) {\n"
+#   ifdef SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+    "   optimizedMoments.y = optimizedMoments.x-0.25*optimizedMoments.y;\n"
+#   endif //SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
+    "   return optimizedMoments;\n"
     "}\n"
     "\n"
     "void main() {\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
-    "   float shadowFactor = chebyshevUpperBound(shadowCoordinateWdivide.st,shadowCoordinateWdivide.z);\n"
+    "   vec2 moments = ConvertMoments(texture2D(u_shadowMap, shadowCoordinateWdivide.xy).xy);\n"
+    "   float shadowFactor = chebyshevUpperBound(moments.st,shadowCoordinateWdivide.z);\n"
     "   shadowFactor = u_shadowLightBleedingReductionAndDarkening.y + (1.0-u_shadowLightBleedingReductionAndDarkening.y)*shadowFactor;\n"
     "   \n"
     "	gl_FragColor = gl_LightSource[0].ambient + (v_diffuse * vec4(gl_Color.rgb*shadowFactor,1.0));\n"
@@ -377,14 +399,22 @@ typedef struct {
 
 DefaultPass defaultPass;
 void InitDefaultPass(DefaultPass* dp)	{
+    const float shadowLightness = 0.5;
+    const float lightBleedingReduction =
+#   ifndef __EMSCRIPTEN__       // 32-bit textures
+        0.925
+#   else //__EMSCRIPTEN__       // 16-bit textures
+        1.0
+#   endif //__EMSCRIPTEN__
+    ;
 	dp->program = Helper_LoadShaderProgramFromSource(*DefaultPassVertexShader,*DefaultPassFragmentShader);
     dp->uniform_location_biasedShadowMvpMatrix = glGetUniformLocation(dp->program,"u_biasedShadowMvpMatrix");
     dp->uniform_location_shadowMap = glGetUniformLocation(dp->program,"u_shadowMap");
     dp->uniform_location_shadowLightBleedingReductionAndDarkening = glGetUniformLocation(dp->program,"u_shadowLightBleedingReductionAndDarkening");
 
     glUseProgram(dp->program);
-    glUniform1i(dp->uniform_location_shadowMap,0);
-    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,0.9,0.5);	// Both values in [0-1]
+    glUniform1i(dp->uniform_location_shadowMap,0);    
+    glUniform2f(dp->uniform_location_shadowLightBleedingReductionAndDarkening,lightBleedingReduction,shadowLightness);	// Both values in [0-1]
     //glUniformMatrix4fv(dp->uniform_location_biasedShadowMvpMatrix, 1 /*only setting 1 matrix*/, GL_FALSE /*transpose?*/, Matrix);
 	glUseProgram(0);
 }
@@ -1013,7 +1043,13 @@ void GlutCreateWindow() {
         }
     }
     if (!gameModeWindowId) {
-        char windowTitle[1024] = PROGRAM_NAME".c\t("XSTR_MACRO(SHADOW_MAP_RESOLUTION)")\tblur: "XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE)"x"XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE);
+        char windowTitle[1024] = PROGRAM_NAME".c\t";
+#       ifdef __EMSCRIPTEN__
+        strcat(windowTitle,"16bit");
+#       else // __EMSCRIPTEN__
+        strcat(windowTitle,"32bit");
+#       endif //__EMSCRIPTEN__
+        strcat(windowTitle," "XSTR_MACRO(SHADOW_MAP_RESOLUTION)" \tblur: "XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE)"x"XSTR_MACRO(SHADOW_MAP_BLUR_KERNEL_SIZE));
 #       ifndef SHADOW_MAP_BLUR_USING_BOX_FILTER
         strcat(windowTitle," gaussian");
 #       else // SHADOW_MAP_BLUR_USING_BOX_FILTER
@@ -1057,7 +1093,6 @@ void GlutCreateWindow() {
 
 int main(int argc, char** argv)
 {
-
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
     //glutInitContextFlags(GLUT_FORWARD_COMPATIBLE);

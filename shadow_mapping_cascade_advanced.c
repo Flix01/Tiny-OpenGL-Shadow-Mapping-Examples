@@ -59,7 +59,7 @@ for glut.h, glew.h, etc. with something like:
 
 #define PROGRAM_NAME "shadow_mapping_cascade_advanced"
 #define VISUALIZE_DEPTH_TEXTURE
-//#define VISUALIZE_CASCADE_SPLITS
+#define VISUALIZE_CASCADE_SPLITS
 #define SHADOW_MAP_HEIGHT 512               //SHADOW_MAP_WIDTH = SHADOW_MAP_NUM_CASCADES*SHADOW_MAP_HEIGHT
 #define SHADOW_MAP_NUM_CASCADES 4
 #define SHADOW_MAP_CASCADE_LAMBDA   0.7     // in [0=uniform splits,1=logarithmic splits] logarithmic splits put higher resolution near the camera
