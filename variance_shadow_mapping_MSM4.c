@@ -66,8 +66,8 @@ for glut.h, glew.h, etc. with something like:
 
 
 // Not sure if the following are better or not... I would not use them, so that shaders are more portable
-//#   define USE_GLSL_FMA
-//#   define USE_GLSL_TEXTUREGRAD
+//# define USE_GLSL_FMA
+//# define USE_GLSL_TEXTUREGRAD
 
 
 

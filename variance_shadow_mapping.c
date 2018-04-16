@@ -62,6 +62,10 @@ for glut.h, glew.h, etc. with something like:
 //#define SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION     // Optimization for 2 moments proposed in http://cg.cs.uni-bonn.de/aigaion2root/attachments/MomentShadowMapping.pdf
                                                          // [But differences are probably visible in 16-bit mode only, without using any light bleeding reduction...]
 
+// Not sure if the following is better or not... I would not use it, so that shaders are more portable
+//#define USE_GLSL_TEXTUREGRAD
+
+
 // These path definitions can be passed to the compiler command-line
 #ifndef GLUT_PATH
 #   define GLUT_PATH "GL/glut.h"    // Mandatory
@@ -226,9 +230,9 @@ static const char* ShadowPassFragmentShader[] = {   // From http://fabiensanglar
     "   vec2 mu = vec2(FragmentDepth,FragmentDepth*FragmentDepth);\n"
     "   // Adjusting moments (this is sort of bias per pixel) using derivative\n"
     "   // (However many implementations just skip these 3 lines)\n"
-    "   /*float dx = dFdx(FragmentDepth);\n"
+    "   float dx = dFdx(FragmentDepth);\n"
     "   float dy = dFdy(FragmentDepth);\n"
-    "   mu.y += 0.25*(dx*dx+dy*dy);*/\n"
+    "   mu.y += 0.25*(dx*dx+dy*dy);\n"
 #   ifdef SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
     "   mu.y = 4.0*(mu.x-mu.y);\n"
 #   endif //SHADOW_MAP_USE_OPTIMIZED_MOMENT_QUANTIZATION
@@ -383,7 +387,13 @@ static const char* DefaultPassFragmentShader[] = {
     "\n"
     "void main() {\n"
     "	vec4 shadowCoordinateWdivide = v_shadowCoord/v_shadowCoord.w;\n"
+#   ifdef USE_GLSL_TEXTUREGRAD // https://github.com/TheRealMJP/Shadows uses this... but I'm not sure if it's really necessary or not...
+    "   vec3 shadowPosDX = dFdx(shadowCoordinateWdivide).xyz;\n"    // These seem to work even when they are vec2. What's the difference ?
+    "   vec3 shadowPosDY = dFdy(shadowCoordinateWdivide).xyz;\n"
+    "   vec2 moments = ConvertMoments(textureGrad(u_shadowMap, shadowCoordinateWdivide.xy, shadowPosDX, shadowPosDY).xy);\n"
+#   else // USE_GLSL_TEXTUREGRAD
     "   vec2 moments = ConvertMoments(texture2D(u_shadowMap, shadowCoordinateWdivide.xy).xy);\n"
+#   endif //USE_GLSL_TEXTUREGRAD
     "   float shadowFactor = chebyshevUpperBound(moments.st,shadowCoordinateWdivide.z);\n"
     "   shadowFactor = u_shadowLightBleedingReductionAndDarkening.y + (1.0-u_shadowLightBleedingReductionAndDarkening.y)*shadowFactor;\n"
     "   \n"
@@ -628,6 +638,11 @@ void InitGL(void) {
 #   if SHADOW_MAP_BLUR_KERNEL_SIZE>1
     InitBlurPass(&blurPass);
 #   endif
+
+    // New
+#   ifdef USE_GLSL_TEXTUREGRAD
+    //glHint(GL_FRAGMENT_SHADER_DERIVATIVE_HINT,GL_NICEST);   // Optional if USE_GLSL_TEXTUREGRAD is defined in the default pass fragment shader (GL_FASTEST, GL_NICEST, and GL_DONT_CARE)
+#   endif //USE_GLSL_TEXTUREGRAD
 
     // Please note that after InitGL(), this implementation calls ResizeGL(...,...).
     // If you copy/paste this code you can call it explicitly...
