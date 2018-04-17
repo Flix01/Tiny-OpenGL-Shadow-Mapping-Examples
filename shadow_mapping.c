@@ -52,6 +52,7 @@ for glut.h, glew.h, etc. with something like:
     //          GL_CLAMP_TO_BORDER;     // sampling outside of the shadow map gives always non-shadowed pixels (if we set the border color correctly)
 #define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR is more useful with a sampler2DShadow, that cannot be used with esponential shadow mapping)
 
+//#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE   // Better resolution, but shadow-flickering as the camera rotates (on static objects). Please see README.md about it.
 
 // These path definitions can be passed to the compiler command-line
 #ifndef GLUT_PATH
@@ -181,7 +182,7 @@ float lightYaw = M_PI*0.425f,lightPitch = M_PI*0.235f;   // must be copied to re
 float lightDirection[4] = {0,1,0,0};                    // Derived value (do not edit) [lightDirection[3]==0]
 
 // pMatrix data:
-float pMatrix[16];                      // projection matrix
+float pMatrix[16],pMatrixInverse[16];   // projection matrix (pMatrixInverse is used only when USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is defined)
 const float pMatrixFovyDeg = 45.f;      // smaller => better shadow resolution
 const float pMatrixNearPlane = 0.5f;    // bigger  => better shadow resolution
 const float pMatrixFarPlane = 20.f;     // smaller => better shadow resolution
@@ -318,7 +319,10 @@ void ResizeGL(int w,int h) {
         // We set our pMatrix
         Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
 
-		glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);		
+        glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
+
+        // pMatrixInverse is used only when USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is defined
+        Helper_InvertMatrix(pMatrixInverse,pMatrix);
 	}
 
 
@@ -403,10 +407,19 @@ void DrawGL(void)
 
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
+#       ifndef USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
         Helper_GetLightViewProjectionMatrix(lvpMatrix,
                                              vMatrixInverse,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
                                              lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION);
-
+#       else //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+        Helper_GetLightViewProjectionMatrixExtra(0,
+                                             vMatrixInverse,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
+                                             lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION,
+                                             0,0,
+                                             pMatrixInverse,    // Mandatory when we need to retrieve arguments that follow it
+                                             0,0,
+                                             lvpMatrix);        // Technically this was provided as an 'lvpMatrix for optimal frustum culling usage' in the 'Stable Shadow Mapping' case (but can be used to replace it too)
+#       endif //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
 
         // Draw to shadow map texture
         glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();glMatrixMode(GL_MODELVIEW);        // We'll set the combined light view-projection matrix in GL_MODELVIEW (do you know that it's the same?)

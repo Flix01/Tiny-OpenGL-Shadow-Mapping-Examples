@@ -422,8 +422,9 @@ static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict 
     const hloat cameraPosition3[3] = {cameraVMatrixInverse16[12],cameraVMatrixInverse16[13],cameraVMatrixInverse16[14]};
     const hloat cameraForwardDirection3[3] = {-cameraVMatrixInverse16[8],-cameraVMatrixInverse16[9],-cameraVMatrixInverse16[10]};
     hloat frustumCenter[3] = {0,0,0};hloat radius = 0;
-    hloat lpMatrix[16],lvMatrix[16];
+    hloat lpMatrix[16],lvMatrix[16],lvpMatrixFallback[16];
     int i;
+    if (lvpMatrixOut16==0) lvpMatrixOut16=lvpMatrixFallback;    // AFAIK from the caller point of view it's still lvpMatrixOut16==0, isn't it?
 
     // Get frustumCenter and radius
     hloat frustumCenterDistance;
@@ -474,7 +475,6 @@ static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict 
             roundOffset[i] = roundedOrigin[i] - shadowOrigin[i];
             roundOffset[i]*=  texelCoefficient;
         }
-
         lvpMatrixOut16[12]+= roundOffset[0];
         lvpMatrixOut16[13]+= roundOffset[1];
     }
@@ -532,14 +532,40 @@ static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict 
         }
 
         if (optionalLVPMatrixForFrustumCullingUsageOut16)   {
-            // Experimental: never tested
+            const int attemptToFixSwimming = (lvpMatrixOut16==lvpMatrixFallback) ? 1 : 0;   // Only if we don't want lvpMatrixOut16
+            float minmaxXY[4]={minVal[0]*radius,maxVal[0]*radius,minVal[1]*radius,maxVal[1]*radius};
+            if (attemptToFixSwimming && texelIncrement>0)   {
+                for (i=0;i<4;i++) {
+                    // This 'should' fix Shadow swimming (1) in the 'Stable Shadow Mapping Technique'
+                    // Not sure it works here too...
+                    if (minmaxXY[i]>=0) minmaxXY[i] = ceil(minmaxXY[i]/texelIncrement)*texelIncrement;
+                    else                minmaxXY[i] = -ceil(-minmaxXY[i]/texelIncrement)*texelIncrement;
+                }
+            }
             Helper_Ortho(optionalLVPMatrixForFrustumCullingUsageOut16,
-                         minVal[0]*radius,maxVal[0]*radius,
-                         minVal[1]*radius,maxVal[1]*radius,
+                         minmaxXY[0],minmaxXY[1],
+                         minmaxXY[2],minmaxXY[3],
                          0,-2.0*radius                      // For z, we just copy Helper_Ortho(lpMatrix,...)
                          );
             Helper_MultMatrix(optionalLVPMatrixForFrustumCullingUsageOut16,optionalLVPMatrixForFrustumCullingUsageOut16,lvMatrix);
-            // we don't apply the shadow swimming rotational fix for the frustum culling usage (should we ?)
+            // This 'should' fix Shadow swimming (2) in the 'Stable Shadow Mapping Technique'
+            // Not here, because the shadow viewport stretches when the camera rotates
+            // We try anyway...
+            if (attemptToFixSwimming && texelIncrement>0)   {
+                hloat shadowOrigin[4]   = {0,0,0,1};
+                hloat roundedOrigin[4]  = {0,0,0,0};
+                hloat roundOffset[4]    = {0,0,0,0};
+                hloat texelCoefficient = texelIncrement*2.0;
+                Helper_MatrixMulPos(optionalLVPMatrixForFrustumCullingUsageOut16,shadowOrigin,shadowOrigin[0],shadowOrigin[1],shadowOrigin[2]);
+                for (i = 0; i < 2; i++) {// Or i<3 ?
+                    shadowOrigin[i]/= texelCoefficient;
+                    roundedOrigin[i] = Helper_Round(shadowOrigin[i]);
+                    roundOffset[i] = roundedOrigin[i] - shadowOrigin[i];
+                    roundOffset[i]*=  texelCoefficient;
+                }
+                optionalLVPMatrixForFrustumCullingUsageOut16[12]+= roundOffset[0];
+                optionalLVPMatrixForFrustumCullingUsageOut16[13]+= roundOffset[1];
+            }
         }
     }
 
@@ -610,8 +636,8 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
         hloat frustumFarClippingPlane = cascadeNearAndFarPlanesArray[cascadeIterator+1];
         hloat frustumCenter[3] = {0,0,0};
         hloat radius = 0.0;//,radius2 = 0.0;
-        hloat lpMatrix[16],lvMatrix[16];
-        hloat* lvpMatrixOut16 = &lvpMatricesOut16[16*cascadeIterator];
+        hloat lpMatrix[16],lvMatrix[16],lvpMatrixFallback[16];
+        hloat* lvpMatrixOut16 = lvpMatricesOut16 ? &lvpMatricesOut16[16*cascadeIterator] : lvpMatrixFallback;
 
         // Get frustumCenter and radius
         hloat frustumCenterDistance;
@@ -661,7 +687,6 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
                 roundOffset[i] = roundedOrigin[i] - shadowOrigin[i];
                 roundOffset[i]*=  texelCoefficient;
             }
-
             lvpMatrixOut16[12]+= roundOffset[0];
             lvpMatrixOut16[13]+= roundOffset[1];
         }
@@ -717,15 +742,41 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
             }
 
             if (optionalLVPMatrixForFrustumCullingUsageArrayOut)   {
+                const int attemptToFixSwimming = (lvpMatricesOut16==0) ? 1 : 0;   // Only if we don't want lvpMatricesOut16
+                float minmaxXY[4]={minVal[0]*radius,maxVal[0]*radius,minVal[1]*radius,maxVal[1]*radius};
+                if (attemptToFixSwimming && texelIncrement>0)   {
+                    for (i=0;i<4;i++) {
+                        // This 'should' fix Shadow swimming (1) in the 'Stable Shadow Mapping Technique'
+                        // Not sure it works here too...
+                        if (minmaxXY[i]>=0) minmaxXY[i] = ceil(minmaxXY[i]/texelIncrement)*texelIncrement;
+                        else                minmaxXY[i] = -ceil(-minmaxXY[i]/texelIncrement)*texelIncrement;
+                    }
+                }
                 hloat* plvpMatrixForFrustumCullingOut = &optionalLVPMatrixForFrustumCullingUsageArrayOut[cascadeIterator*16];
-                // Experimental: never tested
                 Helper_Ortho(plvpMatrixForFrustumCullingOut,
-                             minVal[0]*radius,maxVal[0]*radius,
-                        minVal[1]*radius,maxVal[1]*radius,
+                        minmaxXY[0],minmaxXY[1],
+                        minmaxXY[2],minmaxXY[3],
                         0,-2.0*radius                      // For z, we just copy Helper_Ortho(lpMatrix,...)
                         );
                 Helper_MultMatrix(plvpMatrixForFrustumCullingOut,plvpMatrixForFrustumCullingOut,lvMatrix);
-                // we don't apply the shadow swimming rotational fix for the frustum culling usage (should we ?)
+                // This 'should' fix Shadow swimming (2) in the 'Stable Shadow Mapping Technique'
+                // Not here, because the shadow viewport stretches when the camera rotates
+                // We try anyway...
+                if (attemptToFixSwimming && texelIncrement>0)   {
+                    hloat shadowOrigin[4]   = {0,0,0,1};
+                    hloat roundedOrigin[4]  = {0,0,0,0};
+                    hloat roundOffset[4]    = {0,0,0,0};
+                    hloat texelCoefficient = texelIncrement*2.0;
+                    Helper_MatrixMulPos(plvpMatrixForFrustumCullingOut,shadowOrigin,shadowOrigin[0],shadowOrigin[1],shadowOrigin[2]);
+                    for (i = 0; i < 2; i++) {// Or i<3 ?
+                        shadowOrigin[i]/= texelCoefficient;
+                        roundedOrigin[i] = Helper_Round(shadowOrigin[i]);
+                        roundOffset[i] = roundedOrigin[i] - shadowOrigin[i];
+                        roundOffset[i]*=  texelCoefficient;
+                    }
+                    plvpMatrixForFrustumCullingOut[12]+= roundOffset[0];
+                    plvpMatrixForFrustumCullingOut[13]+= roundOffset[1];
+                }
             }
         }
 
