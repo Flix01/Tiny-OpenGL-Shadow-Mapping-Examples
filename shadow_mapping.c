@@ -52,7 +52,8 @@ for glut.h, glew.h, etc. with something like:
     //          GL_CLAMP_TO_BORDER;     // sampling outside of the shadow map gives always non-shadowed pixels (if we set the border color correctly)
 #define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR is more useful with a sampler2DShadow, that cannot be used with esponential shadow mapping)
 
-//#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE   // Better resolution, but shadow-flickering as the camera rotates (on static objects). Please see README.md about it.
+//#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE   // Better resolution, but shadow-swimming as the camera rotates (on static objects). Please see README.md about it.
+
 
 // These path definitions can be passed to the compiler command-line
 #ifndef GLUT_PATH
@@ -724,10 +725,15 @@ void GlutCreateWindow() {
         }
     }
     if (!gameModeWindowId) {
+        char windowTitle[1024] = PROGRAM_NAME".c\t";
+#       ifdef  USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+        strcat(windowTitle,"[Unstable]\t");
+#       endif  //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+        strcat(windowTitle,"("XSTR_MACRO(SHADOW_MAP_RESOLUTION)")");
         config.fullscreen_enabled = 0;
         glutInitWindowPosition(100,100);
         glutInitWindowSize(config.windowed_width,config.windowed_height);
-        windowId = glutCreateWindow(PROGRAM_NAME".c\t("XSTR_MACRO(SHADOW_MAP_RESOLUTION)")");
+        windowId = glutCreateWindow(windowTitle);
     }
 
     glutKeyboardFunc(GlutNormalKeys);

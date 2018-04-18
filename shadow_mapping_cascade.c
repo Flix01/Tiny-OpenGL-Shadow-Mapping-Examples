@@ -55,6 +55,7 @@ for glut.h, glew.h, etc. with something like:
     //          GL_CLAMP_TO_BORDER;     // sampling outside of the shadow map gives always non-shadowed pixels (if we set the border color correctly)
 #define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR is more useful with a sampler2DShadow, that cannot be used with esponential shadow mapping)
 
+//#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE   // Better resolution, but shadow-swimming as the camera rotates (on static objects). Please see README.md about it.
 
 
 // These path definitions can be passed to the compiler command-line
@@ -196,6 +197,9 @@ const float pMatrixFarPlane = 20.0f;
 
 // we calculate these in ResizeGL(...)
 float gCascadeNearAndFarClippingPlanes[SHADOW_MAP_NUM_CASCADES+1];  // Array of the clipping planes of each cascade (gCascadeNearAndFarClippingPlanes[0]==pMatrixNearPlane and gCascadeNearAndFarClippingPlanes[SHADOW_MAP_NUM_CASCADES]==pMatrixFarPlane)
+#ifdef USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+float gCascadePMatricesInv[16*SHADOW_MAP_NUM_CASCADES]; // One inverse pMatrix per cascade (calculated in ResizeGL(...))
+#endif //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
 
 
 float instantFrameTime = 16.2f;
@@ -376,6 +380,18 @@ void ResizeGL(int w,int h) {
         glUseProgram(defaultPass.program);
         glUniform1fv(defaultPass.uniform_location_cascadeNearAndFarClippingPlanes, SHADOW_MAP_NUM_CASCADES,gCascadeNearAndFarClippingPlanes);
         glUseProgram(0);
+
+#       ifdef USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+        // Here we fill float gCascadePMatricesInv[16*SHADOW_MAP_NUM_CASCADES]: (basically the inverse of all the camera projection matrices, one per split)
+        {
+            int i;
+            for (i=0;i<SHADOW_MAP_NUM_CASCADES;i++) {
+                float* pMatrixInv = &gCascadePMatricesInv[16*i];
+                Helper_Perspective(pMatrixInv,pMatrixFovyDeg,(float)w/(float)h,gCascadeNearAndFarClippingPlanes[i],gCascadeNearAndFarClippingPlanes[i+1]);
+                Helper_InvertMatrix(pMatrixInv,pMatrixInv); // in-place operation (note tha we can't use Helper_InvertMatrixFast(...) here)
+            }
+        }
+#       endif //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
     }
 
 
@@ -459,12 +475,24 @@ void DrawGL(void)
 
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
+#       ifndef USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
         Helper_GetLightViewProjectionMatrices(lvpMatrices,gCascadeNearAndFarClippingPlanes,SHADOW_MAP_NUM_CASCADES,
                                               vMatrixInverse,
                                               pMatrixFovyDeg,current_aspect_ratio,
                                               lightDirection,1.0f/(float)SHADOW_MAP_HEIGHT
                                               //,0,0//,vMatrix
                                               );
+#       else //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+        Helper_GetLightViewProjectionMatricesExtra(0,gCascadeNearAndFarClippingPlanes,SHADOW_MAP_NUM_CASCADES,
+                                                   vMatrixInverse,
+                                                   pMatrixFovyDeg,current_aspect_ratio,
+                                                   lightDirection,1.0f/(float)SHADOW_MAP_HEIGHT,
+                                                   0,0,
+                                                   gCascadePMatricesInv,    // Mandatory when we need to retrieve arguments that follow it
+                                                   0,0,
+                                                   lvpMatrices  // Technically this was provided as an 'lvpMatrices for optimal frustum culling usage' argument to be used in the 'Stable Shadow Mapping' case (but can be used to replace it too)
+                                                   );
+#       endif //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
 
         // Draw to shadow map texture
         glMatrixMode(GL_PROJECTION);glPushMatrix();glLoadIdentity();glMatrixMode(GL_MODELVIEW);        // We'll set the combined light view-projection matrix in GL_MODELVIEW (do you know that it's the same?)
@@ -774,10 +802,15 @@ void GlutCreateWindow() {
         }
     }
     if (!gameModeWindowId) {
+        char windowTitle[1024] = PROGRAM_NAME".c\t";
+#       ifdef  USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+        strcat(windowTitle,"[Unstable]\t");
+#       endif  //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+        strcat(windowTitle,"("XSTR_MACRO(SHADOW_MAP_HEIGHT)"x"SHADOW_MAP_NUM_CASCADES_STRING")");
         config.fullscreen_enabled = 0;
         glutInitWindowPosition(100,100);
         glutInitWindowSize(config.windowed_width,config.windowed_height);
-        windowId = glutCreateWindow(PROGRAM_NAME".c\t"XSTR_MACRO(SHADOW_MAP_WIDTH));
+        windowId = glutCreateWindow(windowTitle);
     }
 
     glutKeyboardFunc(GlutNormalKeys);

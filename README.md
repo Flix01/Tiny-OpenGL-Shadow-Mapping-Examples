@@ -35,7 +35,13 @@ The demos: shadow_mapping_sESM1.c, variance_shadow_mapping.c, variance_shadow_ma
 ## Implmentation
 All the examples in this repository implement "Stable Shadow Mapping".
 That means that static shadows should not flicker when the camera moves or rotates, at the expense of the shadow resolution, that is usually only a half of the resolution that can be used in any "Non-Stable Shadow Mapping" technique.
+
+
 In addition, the light matrices calculated by the "Stable Shadow Mapping" algorithm are not optimal for frustum culling usage, and if we want to filter the shadow map (like in VSM), we waste a lot of resources, unless we manage to calculate a tighter texture viewport somehow (we address this issue in **shadow_mapping_advanced.c** and  **shadow_mapping_cascade_advanced.c**).
+
+
+The demos **shadow_mapping.c**,**shadow_mapping_cascade.c** and **shadow_mapping_cascade_texture_array.c** can be compiled with the optional definition **USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE** so that we can compare the two techniques.
+
 
 The "Stable Shadow Mapping" algorithm calculates the minimum sphere that encloses the camera frustum, and further encloses it in a light ortho projection matrix.
 
