@@ -53,7 +53,7 @@ for glut.h, glew.h, etc. with something like:
 #define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR is more useful with a sampler2DShadow, that cannot be used with esponential shadow mapping)
 
 //#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE // Better resolution, but shadow-swimming as the camera rotates (on static objects). Please see README.md about it.
-//#define USE_CAMERA_ORTHO3D_PROJECTION_MATRIX    // Experimental [Helper_Ortho3D(...) currently skips the pMatrixNearPlane, because it does not seem to work... please see its implementation for further details]
+//#define USE_CAMERA_ORTHO3D_PROJECTION_MATRIX    // AFAIK Ortho3D is only used in 3D editors like Blender, that can switch from perspective to ortho view (it needs a camera target to work). Hope Helper_Ortho3D(...) is correct [please see its implementation].
 
 
 // These path definitions can be passed to the compiler command-line
@@ -321,9 +321,9 @@ void ResizeGL(int w,int h) {
         // We set our pMatrix
 #       ifndef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
         Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
-#       else //USE_ORTHO_PROJECTION_MATRIX
+#       else //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
         Helper_Ortho3D(pMatrix,cameraDistance,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
-#       endif //USE_ORTHO_PROJECTION_MATRIX
+#       endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
         glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
 
         // pMatrixInverse is used only when USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is defined
@@ -573,14 +573,14 @@ static void resetCamera() {
     cameraPitch = M_PI*0.125f;                      // The camera rotation around the XZ plane
 #   ifndef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
     cameraDistance = 5;                             // The distance between the camera position and the camera target point
-#   else //USE_ORTHO_PROJECTION_MATRIX
+#   else //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
     cameraDistance = pMatrixFarPlane*0.5f;                             // The distance between the camera position and the camera target point
-#   endif //USE_ORTHO_PROJECTION_MATRIX
+#   endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
 
     updateCameraPos();
 #   ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
     ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
-#   endif //USE_ORTHO_PROJECTION_MATRIX
+#   endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
 }
 
 static void resetLight() {
@@ -614,7 +614,7 @@ void GlutSpecialKeys(int key,int x,int y)
             updateCameraPos();
 #           ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
             ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
-#           endif //USE_ORTHO_PROJECTION_MATRIX
+#           endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
             break;
         case GLUT_KEY_F1:
         case GLUT_KEY_F2:
@@ -669,7 +669,7 @@ void GlutSpecialKeys(int key,int x,int y)
             updateCameraPos();
 #           ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
             ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
-#           endif //USE_ORTHO_PROJECTION_MATRIX
+#           endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
         break;
         }
     }
