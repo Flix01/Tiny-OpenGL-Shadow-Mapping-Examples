@@ -277,6 +277,13 @@ static __inline void Helper_Ortho(hloat* __restrict mOut16,hloat left,hloat righ
     res[14] = (farVal+nearVal)/Dfn;
     res[15] = 1;
 }
+static __inline void Helper_Ortho3D(hloat* __restrict mOut16,hloat cameraTargetDistance,hloat degfovy,hloat aspect,hloat znear,hloat zfar)	{
+    const hloat FOVTG=tan(degfovy*3.14159265358979323846/360.0);
+    hloat y=cameraTargetDistance*FOVTG;//=(zfar-znear)*0.5f;
+    hloat x=y*aspect;
+    //Helper_Ortho(mOut16, -x, x, -y, y, znear, zfar);  // This should be correct
+    Helper_Ortho(mOut16, -x, x, -y, y, -zfar, zfar);    // But this works in my test-case
+}
 static __inline int Helper_InvertMatrix(hloat* __restrict mOut16,const hloat* __restrict m16)	{
     const hloat* m = m16;
     hloat* n = mOut16;

@@ -361,7 +361,7 @@ static const char* DefaultPassFragmentShader[] = {
     "   // We now use chebyshev's upperBound to check\n"
     "   // How likely this pixel is to be lit (p_max)\n"
     "   float variance = moments.y - (moments.x*moments.x);\n"
-    "   variance = max(variance,0.0000001);\n"    // Here we can specify the minimum variance (it affects Peter Panning)
+    "   variance = max(variance,0.0000000001);\n"    // Here we can specify the minimum variance (it affects Peter Panning) [It seems that smaller is better]
     "\n"
     "   float d = distance - moments.x;\n"
     "   float p_max = variance / (variance + d*d);\n"   // 0<p_max<1
@@ -412,7 +412,7 @@ void InitDefaultPass(DefaultPass* dp)	{
     const float shadowLightness = 0.5;
     const float lightBleedingReduction =
 #   ifndef __EMSCRIPTEN__       // 32-bit textures
-        0.925
+        0.925 //0.925
 #   else //__EMSCRIPTEN__       // 16-bit textures
         1.0
 #   endif //__EMSCRIPTEN__

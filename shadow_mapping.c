@@ -52,7 +52,8 @@ for glut.h, glew.h, etc. with something like:
     //          GL_CLAMP_TO_BORDER;     // sampling outside of the shadow map gives always non-shadowed pixels (if we set the border color correctly)
 #define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR is more useful with a sampler2DShadow, that cannot be used with esponential shadow mapping)
 
-//#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE   // Better resolution, but shadow-swimming as the camera rotates (on static objects). Please see README.md about it.
+//#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE // Better resolution, but shadow-swimming as the camera rotates (on static objects). Please see README.md about it.
+//#define USE_CAMERA_ORTHO3D_PROJECTION_MATRIX    // Experimental [Helper_Ortho3D(...) currently skips the pMatrixNearPlane, because it does not seem to work... please see its implementation for further details]
 
 
 // These path definitions can be passed to the compiler command-line
@@ -318,8 +319,11 @@ void ResizeGL(int w,int h) {
     if (current_height!=0) current_aspect_ratio = current_width/current_height;
     if (h>0)	{
         // We set our pMatrix
+#       ifndef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
         Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
-
+#       else //USE_ORTHO_PROJECTION_MATRIX
+        Helper_Ortho3D(pMatrix,cameraDistance,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
+#       endif //USE_ORTHO_PROJECTION_MATRIX
         glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
 
         // pMatrixInverse is used only when USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is defined
@@ -446,7 +450,7 @@ void DrawGL(void)
     // Draw world
     {
         // biasedShadowMvpMatrix is used only in the DefaultPass:
-        static float bias[16] = {0.5,0,0,0, 0,0.5,0,0,  0,0,0.5,0,    0.5,0.5,0.5,1}; // Moving from unit cube [-1,1] to [0,1]
+        static float bias[16] = {0.5,0,0,0, 0,0.5,0,0,  0,0,0.5,0,    0.5,0.5,0.5,1}; // Moving from unit cube in NDC [-1,1][-1,1][-1,1] to [0,1][0,1][0,1] (x and y are texCoords; z is the depth range, [0,1] by default in window coordinates)
         static float biasedShadowMvpMatrix[16];     // multiplied per vMatrixInverse
         Helper_MultMatrix(biasedShadowMvpMatrix,bias,lvpMatrix);
         Helper_MultMatrix(biasedShadowMvpMatrix,biasedShadowMvpMatrix,vMatrixInverse);  // We do this, so that when in the vertex shader we multiply it with the camera mvMatrix, we get: biasedShadowMvpMatrix * mMatrix (using mMatrices directly in the shaders prevents the usage of double precision matrices: mvMatrices are good when converted to float to feed the shader, mMatrices are bad)
@@ -567,9 +571,16 @@ static void resetCamera() {
     targetPos[0]=0; targetPos[1]=0; targetPos[2]=0; // The camera target point
     cameraYaw = 2*M_PI;                             // The camera rotation around the Y axis
     cameraPitch = M_PI*0.125f;                      // The camera rotation around the XZ plane
+#   ifndef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
     cameraDistance = 5;                             // The distance between the camera position and the camera target point
+#   else //USE_ORTHO_PROJECTION_MATRIX
+    cameraDistance = pMatrixFarPlane*0.5f;                             // The distance between the camera position and the camera target point
+#   endif //USE_ORTHO_PROJECTION_MATRIX
 
     updateCameraPos();
+#   ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
+    ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
+#   endif //USE_ORTHO_PROJECTION_MATRIX
 }
 
 static void resetLight() {
@@ -601,6 +612,9 @@ void GlutSpecialKeys(int key,int x,int y)
             cameraDistance+= instantFrameTime*cameraSpeed*(key==GLUT_KEY_PAGE_DOWN ? 25.0f : -25.0f);
             if (cameraDistance<1.f) cameraDistance=1.f;
             updateCameraPos();
+#           ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
+            ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
+#           endif //USE_ORTHO_PROJECTION_MATRIX
             break;
         case GLUT_KEY_F1:
         case GLUT_KEY_F2:
@@ -653,6 +667,9 @@ void GlutSpecialKeys(int key,int x,int y)
             if (targetPos[1]<-50.f) targetPos[1]=-50.f;
             else if (targetPos[1]>500.f) targetPos[1]=500.f;
             updateCameraPos();
+#           ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
+            ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
+#           endif //USE_ORTHO_PROJECTION_MATRIX
         break;
         }
     }
