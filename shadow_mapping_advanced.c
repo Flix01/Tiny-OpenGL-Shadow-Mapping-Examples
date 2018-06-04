@@ -421,7 +421,7 @@ void DrawGL(void)
     // Draw to Shadow Map------------------------------------------------------------------------------------------
     {
         Helper_GetLightViewProjectionMatrixExtra(lvpMatrix,vMatrixInverse,
-                                             pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
+                                             pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,0,
                                              lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION
                                              ,0,0
                                              ,pMatrixInv,shadowTextureViewportClipping

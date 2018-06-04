@@ -491,7 +491,7 @@ void DrawGL(void)
     {
         Helper_GetLightViewProjectionMatricesExtra(lvpMatrices,gCascadeNearAndFarClippingPlanes,SHADOW_MAP_NUM_CASCADES,
                                               vMatrixInverse,
-                                              pMatrixFovyDeg,current_aspect_ratio,
+                                              pMatrixFovyDeg,current_aspect_ratio,0,
                                               lightDirection,1.0f/(float)SHADOW_MAP_HEIGHT
                                               ,0,0
                                               ,pMatrixInverseArray,shadowTextureViewportClippingArray

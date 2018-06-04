@@ -44,7 +44,7 @@ for glut.h, glew.h, etc. with something like:
 
 
 #define PROGRAM_NAME "shadow_mapping_cascade"
-#define VISUALIZE_DEPTH_TEXTURE
+//#define VISUALIZE_DEPTH_TEXTURE
 //#define VISUALIZE_CASCADE_SPLITS
 #define SHADOW_MAP_HEIGHT 512               //SHADOW_MAP_WIDTH = SHADOW_MAP_NUM_CASCADES*SHADOW_MAP_HEIGHT
 #define SHADOW_MAP_NUM_CASCADES 4
@@ -56,6 +56,17 @@ for glut.h, glew.h, etc. with something like:
 #define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR is more useful with a sampler2DShadow, that cannot be used with esponential shadow mapping)
 
 //#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE   // Better resolution, but shadow-swimming as the camera rotates (on static objects). Please see README.md about it.
+
+// Warning: This is one of the demos that supports switching from perspective camera view to ortho camera view [F1 key].
+// However please note that in ortho view the shadow mapping algorithm is currently ALWAYS a bit unstable (even if USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is not defined).
+//
+// The reason is that I've tried just using the 'perspective' version of the shadow map algorithm and it does not work correctly for cascaded shadow maps (it worked well in non-cascaded shadow_mapping.c).
+// That's why Helper_GetLightViewProjectionMatrices(...) takes one more argument than Helper_GetLightViewProjectionMatrix(...): 'cameraTargetDistanceForOrtho3DModeOnly_or_zero'.
+//
+// Ideally it should be called 'cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero', but in the case of cascaded shadow maps if we set it to zero (= we use the same algo used in perspective mode for ortho mode)
+// it does not work. That's why ortho mode is currently always a bit 'unstable' for cascaded shadow maps (well, less unstable than defining USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE, that works as expected).
+//
+// Hope this point is clear enough...
 
 
 // These path definitions can be passed to the compiler command-line
@@ -108,12 +119,14 @@ typedef struct {
     int windowed_width,windowed_height;
     int fullscreen_enabled;
     int show_fps;
+    int use_camera_ortho3d_projection_matrix;
 } Config;
 void Config_Init(Config* c) {
     c->fullscreen_width=c->fullscreen_height=0;
     c->windowed_width=960;c->windowed_height=540;
     c->fullscreen_enabled=0;
     c->show_fps = 0;
+    c->use_camera_ortho3d_projection_matrix = 0;
 }
 int Config_Load(Config* c,const char* filePath)  {
     FILE* f = fopen(filePath, "rt");
@@ -143,8 +156,11 @@ int Config_Load(Config* c,const char* filePath)  {
                case 2:
                sscanf(buf, "%d", &c->fullscreen_enabled);
                break;
-               case 4:
+               case 3:
                sscanf(buf, "%d", &c->show_fps);
+               break;
+               case 4:
+               sscanf(buf, "%d", &c->use_camera_ortho3d_projection_matrix);
                break;
            }
            nread=0;
@@ -163,6 +179,7 @@ int Config_Save(Config* c,const char* filePath)  {
     fprintf(f, "[Size In Windowed Mode]\n%d %d\n",c->windowed_width,c->windowed_height);
     fprintf(f, "[Fullscreen Enabled (0 or 1) (CTRL+RETURN)]\n%d\n", c->fullscreen_enabled);
     fprintf(f, "[Show FPS (0 or 1) (F2)]\n%d\n", c->show_fps);
+    fprintf(f, "[Use camera ortho3d projection matrix (0 or 1) (F1)]\n%d\n", c->use_camera_ortho3d_projection_matrix);
     fprintf(f,"\n");
     fclose(f);
     return 0;
@@ -371,7 +388,11 @@ void ResizeGL(int w,int h) {
     if (current_height!=0) current_aspect_ratio = current_width/current_height;
     if (h>0)	{
         // We set our pMatrix
-        Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
+        if (!config.use_camera_ortho3d_projection_matrix)
+            Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
+        else
+            Helper_Ortho3D(pMatrix,cameraDistance,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
+
         glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
 
         // Here we calculate the splits (gCascadeNearAndFarClippingPlanes must contain SHADOW_MAP_NUM_CASCADES+1 elements) based on lambda, and camera near and far planes:
@@ -387,7 +408,10 @@ void ResizeGL(int w,int h) {
             int i;
             for (i=0;i<SHADOW_MAP_NUM_CASCADES;i++) {
                 float* pMatrixInv = &gCascadePMatricesInv[16*i];
-                Helper_Perspective(pMatrixInv,pMatrixFovyDeg,(float)w/(float)h,gCascadeNearAndFarClippingPlanes[i],gCascadeNearAndFarClippingPlanes[i+1]);
+                if (!config.use_camera_ortho3d_projection_matrix)
+                    Helper_Perspective(pMatrixInv,pMatrixFovyDeg,(float)w/(float)h,gCascadeNearAndFarClippingPlanes[i],gCascadeNearAndFarClippingPlanes[i+1]);
+                else
+                    Helper_Ortho3D(pMatrixInv,cameraDistance,pMatrixFovyDeg,(float)w/(float)h,gCascadeNearAndFarClippingPlanes[i],gCascadeNearAndFarClippingPlanes[i+1]);
                 Helper_InvertMatrix(pMatrixInv,pMatrixInv); // in-place operation (note tha we can't use Helper_InvertMatrixFast(...) here)
             }
         }
@@ -478,14 +502,14 @@ void DrawGL(void)
 #       ifndef USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
         Helper_GetLightViewProjectionMatrices(lvpMatrices,gCascadeNearAndFarClippingPlanes,SHADOW_MAP_NUM_CASCADES,
                                               vMatrixInverse,
-                                              pMatrixFovyDeg,current_aspect_ratio,
+                                              pMatrixFovyDeg,current_aspect_ratio,config.use_camera_ortho3d_projection_matrix?cameraDistance:0, // Last arg is not present in the non-cascaded equivalent function (please read the Warning at the top of the file)
                                               lightDirection,1.0f/(float)SHADOW_MAP_HEIGHT
                                               //,0,0//,vMatrix
                                               );
 #       else //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
         Helper_GetLightViewProjectionMatricesExtra(0,gCascadeNearAndFarClippingPlanes,SHADOW_MAP_NUM_CASCADES,
                                                    vMatrixInverse,
-                                                   pMatrixFovyDeg,current_aspect_ratio,
+                                                   pMatrixFovyDeg,current_aspect_ratio,config.use_camera_ortho3d_projection_matrix?cameraDistance:0,
                                                    lightDirection,1.0f/(float)SHADOW_MAP_HEIGHT,
                                                    0,0,
                                                    gCascadePMatricesInv,    // Mandatory when we need to retrieve arguments that follow it
@@ -647,6 +671,7 @@ static void resetCamera() {
     cameraDistance = 5;                             // The distance between the camera position and the camera target point
 
     updateCameraPos();
+    if (config.use_camera_ortho3d_projection_matrix)    ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
 }
 
 static void resetLight() {
@@ -678,11 +703,16 @@ void GlutSpecialKeys(int key,int x,int y)
             cameraDistance+= instantFrameTime*cameraSpeed*(key==GLUT_KEY_PAGE_DOWN ? 25.0f : -25.0f);
             if (cameraDistance<1.f) cameraDistance=1.f;
             updateCameraPos();
+            if (config.use_camera_ortho3d_projection_matrix)    ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
             break;
-        case GLUT_KEY_F1:
         case GLUT_KEY_F2:
             config.show_fps = !config.show_fps;
             //printf("showFPS: %s.\n",config.show_fps?"ON":"OFF");fflush(stdout);
+            break;
+        case GLUT_KEY_F1:
+            config.use_camera_ortho3d_projection_matrix = !config.use_camera_ortho3d_projection_matrix;
+            //printf("camera ortho mode: %s.\n",config.use_camera_ortho3d_projection_matrix?"ON":"OFF");fflush(stdout);
+            ResizeGL(current_width,current_height);
             break;
         case GLUT_KEY_HOME:
             // Reset the camera
@@ -730,6 +760,7 @@ void GlutSpecialKeys(int key,int x,int y)
             if (targetPos[1]<-50.f) targetPos[1]=-50.f;
             else if (targetPos[1]>500.f) targetPos[1]=500.f;
             updateCameraPos();
+            if (config.use_camera_ortho3d_projection_matrix)    ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
         break;
         }
     }
@@ -870,6 +901,7 @@ int main(int argc, char** argv)
     printf("ARROW KEYS + SHIFT:\tmove directional light\n");
     printf("CTRL+RETURN:\t\ttoggle fullscreen on/off\n");
     printf("F2:\t\t\tdisplay FPS\n");
+    printf("F1:\t\t\ttoggle camera ortho mode on and off\n");
     printf("\n");
 
     resetCamera();  // Mandatory

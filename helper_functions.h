@@ -280,9 +280,10 @@ static __inline void Helper_Ortho(hloat* __restrict mOut16,hloat left,hloat righ
 static __inline void Helper_Ortho3D(hloat* __restrict mOut16,hloat cameraTargetDistance,hloat degfovy,hloat aspect,hloat znear,hloat zfar)	{
     const hloat FOVTG=tan(degfovy*3.14159265358979323846/360.0);
     hloat y=cameraTargetDistance*FOVTG;//=(zfar-znear)*0.5f;
+    //hloat y=(cameraTargetDistance<zfar?cameraTargetDistance:zfar)*FOVTG;  // or maybe this?
     hloat x=y*aspect;
     //Helper_Ortho(mOut16, -x, x, -y, y, znear, zfar);  // I thought this was correct
-    Helper_Ortho(mOut16, -x, x, -y, y, -zfar, znear);  // But this works better in my test-case
+    Helper_Ortho(mOut16, -x, x, -y, y, -zfar, -znear);  // But this works better in my test-case
 }
 static __inline int Helper_InvertMatrix(hloat* __restrict mOut16,const hloat* __restrict m16)	{
     const hloat* m = m16;
@@ -419,7 +420,7 @@ static __inline void Helper_GetFrustumAabbCenterAndHalfExtents(hloat* __restrict
 // 'optionalPMatrixInverse16' is required only if you need to retrieve (one or more of) the arguments that follow it (otherwise their value is untouched).
 static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict lvpMatrixOut16,
                                                           const hloat* __restrict cameraVMatrixInverse16,
-                                                          hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
+                                                          hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,hloat cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement
                                                           ,hloat* __restrict optionalSphereCenterOut,hloat* __restrict optionalSphereRadiiSquaredOut
                                                           ,const hloat* __restrict optionalCameraPMatrixInverse16
@@ -432,17 +433,30 @@ static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict 
     hloat lpMatrix[16],lvMatrix[16],lvpMatrixFallback[16];
     int i;
     if (lvpMatrixOut16==0) lvpMatrixOut16=lvpMatrixFallback;    // AFAIK from the caller point of view it's still lvpMatrixOut16==0, isn't it?
+    if (cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero>cameraFarClippingPlane) cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero = 0;  // Not needed
 
     // Get frustumCenter and radius
     hloat frustumCenterDistance;
-    hloat tanFovDiagonalSquared = tan(cameraFovyDeg*3.14159265358979323846/360.0); // 0.5*M_PI/180.0
+    hloat tanFovDiagonalSquared = tan(cameraFovyDeg*3.14159265358979323846/360.0); // At this point this is just TANFOVY
     const hloat halfNearFarClippingPlane = 0.5*(cameraFarClippingPlane+cameraNearClippingPlane);
-    tanFovDiagonalSquared*=tanFovDiagonalSquared;
-    tanFovDiagonalSquared*=(1.0+cameraAspectRatio*cameraAspectRatio);
-    frustumCenterDistance = halfNearFarClippingPlane*(1.0+tanFovDiagonalSquared);
-    if (frustumCenterDistance > cameraFarClippingPlane) frustumCenterDistance = cameraFarClippingPlane;
+    if (cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero<=0)  {
+        // camera perspective mode here
+        tanFovDiagonalSquared*=tanFovDiagonalSquared;
+        tanFovDiagonalSquared*=(1.0+cameraAspectRatio*cameraAspectRatio);
+        frustumCenterDistance = halfNearFarClippingPlane*(1.0+tanFovDiagonalSquared);
+        if (frustumCenterDistance > cameraFarClippingPlane) frustumCenterDistance = cameraFarClippingPlane;
+        radius = (tanFovDiagonalSquared*cameraFarClippingPlane*cameraFarClippingPlane) + (cameraFarClippingPlane-frustumCenterDistance)*(cameraFarClippingPlane-frustumCenterDistance); // This is actually radiusSquared
+    }
+    else {
+        // camera ortho3d mode here
+        const hloat y=cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero*tanFovDiagonalSquared;
+        const hloat x=y*cameraAspectRatio;
+        const hloat halfClippingPlaneDistance = 0.5*(cameraFarClippingPlane-cameraNearClippingPlane);
+        frustumCenterDistance = halfNearFarClippingPlane;
+        radius = x*x+y*y; // This is actually radiusXYSquared
+        radius = radius + halfClippingPlaneDistance*halfClippingPlaneDistance;// This is actually radiusSquared
+    }
     for (i=0;i<3;i++) frustumCenter[i] = cameraPosition3[i]+cameraForwardDirection3[i]*frustumCenterDistance;
-    radius = (tanFovDiagonalSquared*cameraFarClippingPlane*cameraFarClippingPlane) + (cameraFarClippingPlane-frustumCenterDistance)*(cameraFarClippingPlane-frustumCenterDistance);
     if (optionalSphereCenterOut)        *optionalSphereCenterOut = frustumCenterDistance;
     if (optionalSphereRadiiSquaredOut)  *optionalSphereRadiiSquaredOut = radius;
     radius = sqrt(radius);
@@ -585,7 +599,7 @@ static __inline void Helper_GetLightViewProjectionMatrix(hloat* __restrict lvpMa
                                                           const hloat* __restrict cameraVMatrixInverse16,
                                                           hloat cameraNearClippingPlane,hloat cameraFarClippingPlane,hloat cameraFovyDeg,hloat cameraAspectRatio,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement)  {
-    Helper_GetLightViewProjectionMatrixExtra(lvpMatrixOut16,cameraVMatrixInverse16,cameraNearClippingPlane,cameraFarClippingPlane,cameraFovyDeg,cameraAspectRatio,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
+    Helper_GetLightViewProjectionMatrixExtra(lvpMatrixOut16,cameraVMatrixInverse16,cameraNearClippingPlane,cameraFarClippingPlane,cameraFovyDeg,cameraAspectRatio,0,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
 }
 
 
@@ -618,10 +632,11 @@ static __inline  void Helper_GetCascadeNearAndFarClippingPlaneArray(hloat*  __re
 * 'optionalCameraPMatrixInverseArray'  (if used) must be an array of 16*numCascades hloats (basically one camera pMatrixInverse per cascade, because the near and far planes change)
 * 'optionalLightViewportClippingArrayOut' (if used) must be an array of 4*numCascades hloats
 * 'optionalCameraFrustumPointsInNDCLightSpaceArrayOut' (if used) must be an array of [8*numCascades][4] hloat
-* 'optionalLVPMatrixForFrustumCullingUsageArrayOut' (if used must contain 16*numCascades hloats*/
+* 'optionalLVPMatrixForFrustumCullingUsageArrayOut' (if used must contain 16*numCascades hloats
+*/
 static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeNearAndFarPlanesArray,int numCascades,
                                                           const hloat* __restrict cameraVMatrixInverse16,
-                                                          hloat cameraFovyDeg,hloat cameraAspectRatio,
+                                                          hloat cameraFovyDeg,hloat cameraAspectRatio,hloat cameraTargetDistanceForOrtho3DModeOnly_or_zero,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement
                                                           ,hloat* __restrict optionalCascadeSphereCenterPlanesOut,hloat* __restrict optionalCascadeSphereRadiiSquaredOut
                                                           ,const hloat* __restrict optionalCameraPMatrixInverseArray
@@ -631,13 +646,24 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
     const hloat cameraPosition3[3] = {cameraVMatrixInverse16[12],cameraVMatrixInverse16[13],cameraVMatrixInverse16[14]};
     const hloat cameraForwardDirection3[3] = {-cameraVMatrixInverse16[8],-cameraVMatrixInverse16[9],-cameraVMatrixInverse16[10]};
     int cascadeIterator,i;
-    // fovx = 2 * atan(aspect*tan(fovy/2))
-    // tan(fovx/2) = aspect*tan(fovy/2)
-    // tan(fovd/2)*tan(fovd/2) = (aspect*aspect+1.0)*tan(fovy/2)*tan(fovy/2))
-    hloat tanFovDiagonalSquared = tan(cameraFovyDeg*3.14159265358979323846/360.0);  // 0.5*M_PI/180.0
+    if (cameraTargetDistanceForOrtho3DModeOnly_or_zero>cascadeNearAndFarPlanesArray[numCascades]) cameraTargetDistanceForOrtho3DModeOnly_or_zero = 0;  // Not needed
+
+    hloat tanFovDiagonalSquared = tan(cameraFovyDeg*3.14159265358979323846/360.0); // At this point this is just TANFOVY
+    hloat ortho3dRadiusXYSquared=0;
     //hloat maxRadius = 0.f;
-    tanFovDiagonalSquared*=tanFovDiagonalSquared;
-    tanFovDiagonalSquared*=(1.0+cameraAspectRatio*cameraAspectRatio);
+    if (cameraTargetDistanceForOrtho3DModeOnly_or_zero<=0)   {
+        // camera perspective mode here
+        tanFovDiagonalSquared*=tanFovDiagonalSquared;
+        tanFovDiagonalSquared*=(1.0+cameraAspectRatio*cameraAspectRatio);
+    }
+    else {
+        // camera ortho3d mode here
+        const hloat y=cameraTargetDistanceForOrtho3DModeOnly_or_zero*tanFovDiagonalSquared;
+        const hloat x=y*cameraAspectRatio;
+        //const hloat halfClippingPlaneDistance = 0.5*(cascadeNearAndFarPlanesArray[numCascades]-cascadeNearAndFarPlanesArray[0]);
+        //frustumCenterDistance = halfNearFarClippingPlane;
+        ortho3dRadiusXYSquared = x*x+y*y; // This is actually radiusXYSquared
+    }
     for (cascadeIterator = numCascades-1; cascadeIterator >= 0; --cascadeIterator) {
         hloat frustumNearClippingPlane = cascadeNearAndFarPlanesArray[cascadeIterator];
         hloat frustumFarClippingPlane = cascadeNearAndFarPlanesArray[cascadeIterator+1];
@@ -650,11 +676,19 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
         hloat frustumCenterDistance;
         const hloat halfNearFarClippingPlane = 0.5*(frustumFarClippingPlane+frustumNearClippingPlane);
 
-        // Mine ------------------------------------------------------------------------------------------------
-        frustumCenterDistance = halfNearFarClippingPlane*(1.0+tanFovDiagonalSquared);
-        if (frustumCenterDistance > frustumFarClippingPlane) {frustumCenterDistance = frustumFarClippingPlane;} // (***)
-        radius = (tanFovDiagonalSquared*frustumFarClippingPlane*frustumFarClippingPlane) + (frustumFarClippingPlane-frustumCenterDistance)*(frustumFarClippingPlane-frustumCenterDistance);
-        //radius2 = (tanFovDiagonalSquared*frustumNearClippingPlane*frustumNearClippingPlane) + (frustumNearClippingPlane-frustumCenterDistance)*(frustumNearClippingPlane-frustumCenterDistance);if (radius<radius2) radius = radius2;
+        if (cameraTargetDistanceForOrtho3DModeOnly_or_zero<=0)   {
+            // camera perspective mode here
+            frustumCenterDistance = halfNearFarClippingPlane*(1.0+tanFovDiagonalSquared);
+            if (frustumCenterDistance > frustumFarClippingPlane) {frustumCenterDistance = frustumFarClippingPlane;} // (***)
+            radius = (tanFovDiagonalSquared*frustumFarClippingPlane*frustumFarClippingPlane) + (frustumFarClippingPlane-frustumCenterDistance)*(frustumFarClippingPlane-frustumCenterDistance);
+            //radius2 = (tanFovDiagonalSquared*frustumNearClippingPlane*frustumNearClippingPlane) + (frustumNearClippingPlane-frustumCenterDistance)*(frustumNearClippingPlane-frustumCenterDistance);if (radius<radius2) radius = radius2;
+        }
+        else {
+            // camera ortho3d mode here
+            const hloat halfClippingPlaneDistance = 0.5*(frustumFarClippingPlane-frustumNearClippingPlane);
+            radius = ortho3dRadiusXYSquared + halfClippingPlaneDistance*halfClippingPlaneDistance;  // it's actually radiusSquared here
+            frustumCenterDistance = halfNearFarClippingPlane;
+        }
 
         if (optionalCascadeSphereCenterPlanesOut) optionalCascadeSphereCenterPlanesOut[cascadeIterator] = frustumCenterDistance;
         if (optionalCascadeSphereRadiiSquaredOut) optionalCascadeSphereRadiiSquaredOut[cascadeIterator] = radius;
@@ -791,9 +825,9 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
 }
 static __inline  void Helper_GetLightViewProjectionMatrices(hloat* __restrict lvpMatricesOut16,const hloat*  __restrict cascadeNearAndFarPlanesArray,int numCascades,
                                                           const hloat* __restrict cameraVMatrixInverse16,
-                                                          hloat cameraFovyDeg,hloat cameraAspectRatio,
+                                                          hloat cameraFovyDeg,hloat cameraAspectRatio,hloat cameraTargetDistanceForOrtho3DModeOnly_or_zero,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement) {
-    Helper_GetLightViewProjectionMatricesExtra(lvpMatricesOut16,cascadeNearAndFarPlanesArray,numCascades,cameraVMatrixInverse16,cameraFovyDeg,cameraAspectRatio,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
+    Helper_GetLightViewProjectionMatricesExtra(lvpMatricesOut16,cascadeNearAndFarPlanesArray,numCascades,cameraVMatrixInverse16,cameraFovyDeg,cameraAspectRatio,cameraTargetDistanceForOrtho3DModeOnly_or_zero,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
 }
 
 static __inline void Helper_Min3(hloat* __restrict res3,const hloat* a3,const hloat* b3) {

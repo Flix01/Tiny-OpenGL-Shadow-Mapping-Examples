@@ -53,8 +53,7 @@ for glut.h, glew.h, etc. with something like:
 #define SHADOW_MAP_FILTER GL_LINEAR // GL_LINEAR or GL_NEAREST (GL_LINEAR is more useful with a sampler2DShadow, that cannot be used with esponential shadow mapping)
 
 //#define USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE // Better resolution, but shadow-swimming as the camera rotates (on static objects). Please see README.md about it.
-//#define USE_CAMERA_ORTHO3D_PROJECTION_MATRIX    // AFAIK Ortho3D is only used in 3D editors like Blender, that can switch from perspective to ortho view (it needs a camera target to work). Hope Helper_Ortho3D(...) is correct [please see its implementation].
-
+                                                // in camera ortho3d mode [F1], the resolution is further better, but shadow-swimming appears when zooming in-out too.
 
 // These path definitions can be passed to the compiler command-line
 #ifndef GLUT_PATH
@@ -102,12 +101,14 @@ typedef struct {
     int windowed_width,windowed_height;
     int fullscreen_enabled;
     int show_fps;
+    int use_camera_ortho3d_projection_matrix;
 } Config;
 void Config_Init(Config* c) {
     c->fullscreen_width=c->fullscreen_height=0;
     c->windowed_width=960;c->windowed_height=540;
     c->fullscreen_enabled=0;
     c->show_fps = 0;
+    c->use_camera_ortho3d_projection_matrix = 0;
 }
 int Config_Load(Config* c,const char* filePath)  {
     FILE* f = fopen(filePath, "rt");
@@ -137,8 +138,11 @@ int Config_Load(Config* c,const char* filePath)  {
                case 2:
                sscanf(buf, "%d", &c->fullscreen_enabled);
                break;
-               case 4:
+               case 3:
                sscanf(buf, "%d", &c->show_fps);
+               break;
+               case 4:
+               sscanf(buf, "%d", &c->use_camera_ortho3d_projection_matrix);
                break;
            }
            nread=0;
@@ -157,6 +161,7 @@ int Config_Save(Config* c,const char* filePath)  {
     fprintf(f, "[Size In Windowed Mode]\n%d %d\n",c->windowed_width,c->windowed_height);
     fprintf(f, "[Fullscreen Enabled (0 or 1) (CTRL+RETURN)]\n%d\n", c->fullscreen_enabled);
     fprintf(f, "[Show FPS (0 or 1) (F2)]\n%d\n", c->show_fps);
+    fprintf(f, "[Use camera ortho3d projection matrix (0 or 1) (F1)]\n%d\n", c->use_camera_ortho3d_projection_matrix);
     fprintf(f,"\n");
     fclose(f);
     return 0;
@@ -319,15 +324,16 @@ void ResizeGL(int w,int h) {
     if (current_height!=0) current_aspect_ratio = current_width/current_height;
     if (h>0)	{
         // We set our pMatrix
-#       ifndef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
-        Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
-#       else //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
-        Helper_Ortho3D(pMatrix,cameraDistance,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
-#       endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
+        if (!config.use_camera_ortho3d_projection_matrix)
+            Helper_Perspective(pMatrix,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
+        else
+            Helper_Ortho3D(pMatrix,cameraDistance,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
+
         glMatrixMode(GL_PROJECTION);glLoadMatrixf(pMatrix);glMatrixMode(GL_MODELVIEW);
 
-        // pMatrixInverse is used only when USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is defined
-        Helper_InvertMatrix(pMatrixInverse,pMatrix);
+#       ifdef USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
+        Helper_InvertMatrix(pMatrixInverse,pMatrix);    // pMatrixInverse is used only when USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is defined
+#       endif //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
 	}
 
 
@@ -418,7 +424,7 @@ void DrawGL(void)
                                              lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION);
 #       else //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
         Helper_GetLightViewProjectionMatrixExtra(0,
-                                             vMatrixInverse,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,
+                                             vMatrixInverse,pMatrixNearPlane,pMatrixFarPlane,pMatrixFovyDeg,current_aspect_ratio,config.use_camera_ortho3d_projection_matrix?cameraDistance:0,  // in camera ortho3d mode, we can still pass zero as last arg here to avoid shadow-flickering when zooming in-out, at the expense of the further boost in shadow resolution that ortho mode can give us
                                              lightDirection,1.0f/(float)SHADOW_MAP_RESOLUTION,
                                              0,0,
                                              pMatrixInverse,    // Mandatory when we need to retrieve arguments that follow it
@@ -571,16 +577,10 @@ static void resetCamera() {
     targetPos[0]=0; targetPos[1]=0; targetPos[2]=0; // The camera target point
     cameraYaw = 2*M_PI;                             // The camera rotation around the Y axis
     cameraPitch = M_PI*0.125f;                      // The camera rotation around the XZ plane
-#   ifndef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
     cameraDistance = 5;                             // The distance between the camera position and the camera target point
-#   else //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
-    cameraDistance = pMatrixFarPlane*0.5f;                             // The distance between the camera position and the camera target point
-#   endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
 
     updateCameraPos();
-#   ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
-    ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
-#   endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
+    if (config.use_camera_ortho3d_projection_matrix)    ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
 }
 
 static void resetLight() {
@@ -612,14 +612,16 @@ void GlutSpecialKeys(int key,int x,int y)
             cameraDistance+= instantFrameTime*cameraSpeed*(key==GLUT_KEY_PAGE_DOWN ? 25.0f : -25.0f);
             if (cameraDistance<1.f) cameraDistance=1.f;
             updateCameraPos();
-#           ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
-            ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
-#           endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
+            if (config.use_camera_ortho3d_projection_matrix)    ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
             break;
-        case GLUT_KEY_F1:
         case GLUT_KEY_F2:
             config.show_fps = !config.show_fps;
             //printf("showFPS: %s.\n",config.show_fps?"ON":"OFF");fflush(stdout);
+            break;
+        case GLUT_KEY_F1:
+            config.use_camera_ortho3d_projection_matrix = !config.use_camera_ortho3d_projection_matrix;
+            //printf("camera ortho mode: %s.\n",config.use_camera_ortho3d_projection_matrix?"ON":"OFF");fflush(stdout);
+            ResizeGL(current_width,current_height);
             break;
         case GLUT_KEY_HOME:
             // Reset the camera
@@ -667,9 +669,7 @@ void GlutSpecialKeys(int key,int x,int y)
             if (targetPos[1]<-50.f) targetPos[1]=-50.f;
             else if (targetPos[1]>500.f) targetPos[1]=500.f;
             updateCameraPos();
-#           ifdef USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
-            ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
-#           endif //USE_CAMERA_ORTHO3D_PROJECTION_MATRIX
+            if (config.use_camera_ortho3d_projection_matrix)    ResizeGL(current_width,current_height); // Needed because in Helper_Orho3D(...) cameraTargetDistance changes
         break;
         }
     }
@@ -806,6 +806,7 @@ int main(int argc, char** argv)
     printf("ARROW KEYS + SHIFT:\tmove directional light\n");
     printf("CTRL+RETURN:\t\ttoggle fullscreen on/off\n");
     printf("F2:\t\t\tdisplay FPS\n");
+    printf("F1:\t\t\ttoggle camera ortho mode on and off\n");
     printf("\n");
 
     resetCamera();  // Mandatory
