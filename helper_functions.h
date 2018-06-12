@@ -278,12 +278,48 @@ static __inline void Helper_Ortho(hloat* __restrict mOut16,hloat left,hloat righ
     res[15] = 1;
 }
 static __inline void Helper_Ortho3D(hloat* __restrict mOut16,hloat cameraTargetDistance,hloat degfovy,hloat aspect,hloat znear,hloat zfar)	{
+    // Warning: this function might be WRONG! Use it at your own risk!
     const hloat FOVTG=tan(degfovy*3.14159265358979323846/360.0);
     hloat y=cameraTargetDistance*FOVTG;//=(zfar-znear)*0.5f;
     //hloat y=(cameraTargetDistance<zfar?cameraTargetDistance:zfar)*FOVTG;  // or maybe this?
     hloat x=y*aspect;
     //Helper_Ortho(mOut16, -x, x, -y, y, znear, zfar);  // I thought this was correct
-    Helper_Ortho(mOut16, -x, x, -y, y, -zfar, -znear);  // But this works better in my test-case
+    //Helper_Ortho(mOut16, -x, x, -y, y, -zfar, znear);  // But this works better in my test-case
+    Helper_Ortho(mOut16, -x, x, -y, y, -zfar, -znear);  // Or maybe this?
+}
+static __inline hloat Helper_Perspective_LinearizeDepth(hloat depth,hloat nearClippingPlane,hloat farClippingPlane) {
+    // Maps values in [0,1] to [0,1] range.
+    // farClippingPlane>0 and nearClippingPlane>0. farClippingPlane>nearClippingPlane.
+    return nearClippingPlane*depth/(farClippingPlane-(farClippingPlane-nearClippingPlane)*depth);
+}
+static __inline hloat Helper_Perspective_DelinearizeDepth(hloat depth,hloat nearClippingPlane,hloat farClippingPlane) {
+    // Maps values in [0,1] to [0,1] range.
+    // farClippingPlane>0 and nearClippingPlane>0. farClippingPlane>nearClippingPlane.
+    return farClippingPlane*depth/(nearClippingPlane+(farClippingPlane-nearClippingPlane)*depth);
+}
+static __inline hloat Helper_Perspective_DepthValueToZ(const hloat* __restrict pMatrix,hloat depthValue) {
+    // Warning: this function might be WRONG! Use it at your own risk!
+    // non-linearized depthValue in [0,1]
+    // returns zEye in [n,f]
+    return pMatrix[14]/((hloat)1.0-(hloat)2.0*depthValue-pMatrix[10]);
+}
+static __inline hloat Helper_Perspective_ZToDepthValue(const hloat* __restrict pMatrix,hloat zEye) {
+    // Warning: this function might be WRONG! Use it at your own risk!
+    // zEye in [n,f]
+    // returns non-linearized depthValue in [0,1]
+    return (pMatrix[14]/zEye + pMatrix[10] - (hloat)1.0)*(hloat)(-0.5);
+}
+static __inline hloat Helper_Ortho_DepthValueToZ(const hloat* __restrict pMatrix,hloat depthValue) {
+    // Warning: this function might be WRONG! Use it at your own risk!
+    // depthValue in [0,1]
+    // returns zEye in [n,f]
+    return ((hloat)2.0*depthValue-(hloat)1.0-pMatrix[14])/pMatrix[10];
+}
+static __inline hloat Helper_Ortho_ZToDepthValue(const hloat* __restrict pMatrix,hloat zEye) {
+    // Warning: this function might be WRONG! Use it at your own risk!
+    // zEye in [n,f]
+    // returns depthValue in [0,1]
+    return (zEye*pMatrix[10]+pMatrix[14]+(hloat)1.0)*(hloat)0.5;
 }
 static __inline int Helper_InvertMatrix(hloat* __restrict mOut16,const hloat* __restrict m16)	{
     const hloat* m = m16;
@@ -704,7 +740,7 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
         //if (cascadeIterator == numCascades-1) maxRadius = radius;
 
         // Get light matrices
-        Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,0.0,-2.0*radius); // maybe here we can use farVal (last arg) as radius (or maxRadius).                                                                                        
+        Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,0.0,-2.0*radius); // maybe here we can use farVal (last arg) as radius (or maxRadius).
         Helper_LookAt(lvMatrix,
                 frustumCenter[0]-normalizedLightDirection3[0]*radius,    // eye[0]
                 frustumCenter[1]-normalizedLightDirection3[1]*radius,    // eye[1]

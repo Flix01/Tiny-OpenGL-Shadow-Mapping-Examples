@@ -67,6 +67,7 @@ shadow_mapping_cascade_texture_array
 shadow_mapping_sESM
 shadow_mapping_sESM1
 shadow_mapping_sESM2
+shadow_mapping_with_dof
 variance_shadow_mapping
 variance_shadow_mapping_EVSM
 variance_shadow_mapping_EVSM2
