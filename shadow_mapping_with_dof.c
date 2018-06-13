@@ -53,24 +53,10 @@ When implemented correctly, it should:
 This should work always regardless of camera zooming, camera ortho/projective mode switching, etc.
 */
 
-// WHY THIS DEMO DOES NOT WORK:
-/*
-Point 1) works.
-Points 2) and 3) do not work (the only case when foreground objects are blurred, the 3D pivot is blurred itself).
-*/
-
-// WHAT IS THE POINT OF KEEPING A DEMO THAT DOES NOT WORK?
-/*
-The hope that somebody could help fixing it.
-*/
-
-// IS THERE SOME FASTER IMPLEMENTATION:
+// IS THERE SOME FASTER IMPLEMENTATION?
 /*
 For sure! Usually people just use hardware mipmaps (instead of filtering in the shader), and in the
 shader they just use textureLod(...) with the desired mipmap level.
-
-In any case this does not solve the above issues (that are related to the math involved in the operation, not to the
-implementation of the blur filter itself).
 */
 
 #define PROGRAM_NAME "shadow_mapping_with_dof"
@@ -398,13 +384,14 @@ static const char* DofPassFragmentShader[] = {
     "}\n"
     "\n"
     "void main() {\n"
-    "   float depth = LinearizeDepth(texture2D(u_depthSampler, v_uv).r);\n" // I really hope that texture2D(u_depthSampler, v_uv).r is in [0,1]
+    "   float depth = LinearizeDepth(texture2D(u_depthSampler, v_uv).r);\n" // texture2D(u_depthSampler, v_uv).r is in [0,1]
     "   float depthDifference = depth - u_focusDepthValue;\n"       // u_focusDepthValue has been pre-linearized
-    "   float depthDifferenceSign = sign(depthDifference);\n"       // Not used (but it might be used to boost blur in perspective-camera foreground objects I think)
-    "   depthDifference = depthDifference*depthDifferenceSign;\n"   // == abs(depthDifference)
-    "   float blurAmount = max(depthDifference - u_dofBlurClampAndBias.y, 0.0);\n"  // The intent if to leave a DeltaZ around u_focusDepthValue (based on u_dofBlurClampAndBias.y), with no blur at all
-    "   blurAmount = min(blurAmount*u_dofBlurClampAndBias.z/* *(3.0-2.0*depthDifferenceSign) */,u_dofBlurClampAndBias.x);\n"    // u_dofBlurClampAndBias.z is the blur power, and u_dofBlurClampAndBias.x is the blur maximum value
-    "   gl_FragColor = vec4(blur(u_sampler,v_uv,u_resolution.xy,u_direction,blurAmount,blurAmount),1.0);\n" // Here we reuse twice blurAmount (for both blur radius and (weight) power), but maybe there's a better way to set these values
+    "   float depthDifferenceSign = sign(depthDifference);\n"       // Used below to boost blur in perspective-camera foreground objects only (not needed in ortho mode)
+    "   depthDifference = depthDifference*depthDifferenceSign;\n"   // == abs(depthDifference) [depthDifferenceSign<0 for foreground objects only]
+    "   float foregroundObjectsBlurBoost = u_linearizeDepthConstants.w+(1.0-u_linearizeDepthConstants.w)*(2.0-1.0*depthDifferenceSign);\n"  // Last added can be boosted this way: (4.0-3.0*depthDifferenceSign) [The difference must be 1.0 regardless of depthDifferenceSign]
+    "   float blurAmount = max(depthDifference*foregroundObjectsBlurBoost*u_dofBlurClampAndBias.z - u_dofBlurClampAndBias.y, 0.0);\n"  // The intent is to leave a DeltaZ around u_focusDepthValue (based on u_dofBlurClampAndBias.y), with no blur at all.
+    "   blurAmount = min(blurAmount,u_dofBlurClampAndBias.x);\n"    // u_dofBlurClampAndBias.z is the blur power, and u_dofBlurClampAndBias.x is the blur maximum value
+    "   gl_FragColor = vec4(blur(u_sampler,v_uv,u_resolution.xy,u_direction,blurAmount,blurAmount),1.0);\n" // Here we reuse blurAmount twice (for both blur radius and (weight) power), but maybe there's a better way to set these values
     "\n"
     "   //gl_FragColor = vec4(depth,depth,depth,1);\n"  // This looks OK for both perspective and ortho AFAICS (so that LinearizeDepth(...) seems to be correct)
     "}\n"
@@ -446,7 +433,7 @@ void InitDofPass(DofPass* sp,int width,int height,int skip_creating_program)	{
         glUniform1i(sp->uniform_location_depthSampler,1);
         glUniform2f(sp->uniform_location_resolution,width,height);
         glUniform2f(sp->uniform_location_direction,1.0f,0.0f);
-        glUniform3f(sp->uniform_location_dofBlurClampAndBias,3.0f,0.025f,3.5f); // .y in (0,1)... but these values are too difficult to tweak
+        glUniform3f(sp->uniform_location_dofBlurClampAndBias,3.0f,0.025f,7.5f); // .y in (0,1)... but these values are too difficult to tweak
         glUniform1f(sp->uniform_location_focusDepthValue,0.5f);
         if (config.use_camera_ortho3d_projection_matrix)
             glUniform4f(sp->uniform_location_linearizeDepthConstants,0.f,pMatrixFarPlane,pMatrixFarPlane-pMatrixNearPlane,1.f);
@@ -552,6 +539,44 @@ void ResizeGL(int w,int h) {
 #       endif //USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE
 
         ResizeDofPass(&dofPass,w,h);    // new
+
+
+//#       define TESTS_TO_REMOVE
+#       ifdef TESTS_TO_REMOVE
+        {
+            float cameraDist;
+            if (!config.use_camera_ortho3d_projection_matrix) {
+                printf("Perspective Camera Tests:\n");
+                for (cameraDist = pMatrixNearPlane;cameraDist<=pMatrixFarPlane+0.001;cameraDist+=0.5f) {
+                    const float cameraDistanceDepthValue = Helper_Perspective_ZToDepthValue(pMatrix,cameraDist);
+                    const float cameraDistanceEyeZ = Helper_Perspective_DepthValueToZ(pMatrix,cameraDistanceDepthValue);
+                    const float cameraDistanceDepthValueLinearized = Helper_Perspective_LinearizeDepth(cameraDistanceDepthValue,pMatrixNearPlane,pMatrixFarPlane);
+                    const float cameraDistanceDepthValue2 = Helper_Perspective_DelinearizeDepth(cameraDistanceDepthValueLinearized,pMatrixNearPlane,pMatrixFarPlane);
+                    if (fabs(cameraDistanceDepthValue-cameraDistanceDepthValue2)>0.0001f || cameraDistanceEyeZ<pMatrixNearPlane || cameraDistanceEyeZ>pMatrixFarPlane ||
+                            cameraDistanceDepthValue<0 || cameraDistanceDepthValue>1 || cameraDistanceDepthValueLinearized<0 || cameraDistanceDepthValueLinearized>1)
+                        printf("cameraDistance=%1.6f cameraDistanceDepthValue=%1.6f cameraDistanceEyeZ=%1.6f cameraDistanceDepthValueLinearized=%1.6f cameraDistanceDepthValue2=%1.6f\n",
+                               cameraDist,cameraDistanceDepthValue,cameraDistanceEyeZ,cameraDistanceDepthValueLinearized,cameraDistanceDepthValue2);
+                }
+                printf("Perspective Camera Tests: DONE\n");
+            }
+            else {
+                printf("Ortho Camera Test:\n");
+                for (cameraDist = pMatrixNearPlane;cameraDist<=pMatrixFarPlane+0.001;cameraDist+=0.5f) {
+                    Helper_Ortho3D(pMatrix,cameraDist,pMatrixFovyDeg,(float)w/(float)h,pMatrixNearPlane,pMatrixFarPlane);
+                    {
+                    const float cameraDistanceDepthValue = Helper_Ortho_ZToDepthValue(pMatrix,cameraDist);
+                    const float cameraDistanceEyeZ = Helper_Ortho_DepthValueToZ(pMatrix,cameraDistanceDepthValue);
+                    if (fabs(cameraDist-cameraDistanceEyeZ)>0.0001f || cameraDistanceEyeZ<pMatrixNearPlane || cameraDistanceEyeZ>pMatrixFarPlane ||
+                            cameraDistanceDepthValue<0 || cameraDistanceDepthValue>1)
+                        printf("cameraDistance=%1.6f cameraDistanceDepthValue=%1.6f cameraDistanceEyeZ=%1.6f\n",
+                               cameraDist,cameraDistanceDepthValue,cameraDistanceEyeZ);
+                    }
+                }
+                printf("Ortho Camera Test: DONE\n");
+            }
+            exit(1);
+        }
+#       endif
     }
 
 

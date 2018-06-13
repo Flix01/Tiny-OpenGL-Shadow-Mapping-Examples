@@ -298,28 +298,32 @@ static __inline hloat Helper_Perspective_DelinearizeDepth(hloat depth,hloat near
     return farClippingPlane*depth/(nearClippingPlane+(farClippingPlane-nearClippingPlane)*depth);
 }
 static __inline hloat Helper_Perspective_DepthValueToZ(const hloat* __restrict pMatrix,hloat depthValue) {
-    // Warning: this function might be WRONG! Use it at your own risk!
     // non-linearized depthValue in [0,1]
-    // returns zEye in [n,f]
-    return pMatrix[14]/((hloat)1.0-(hloat)2.0*depthValue-pMatrix[10]);
+    // returns zEye in [n,f] n,f positive
+    if (depthValue>(hloat)0.99999) depthValue-=(hloat) 0.00001;    // Otherwise result can be slightly bigger than f
+    return pMatrix[14]/((depthValue*(hloat)2.0)-(hloat)1.0+pMatrix[10]);
+    // WC: [0,1] To [-1,1] => (x*2.0)-1.0
 }
 static __inline hloat Helper_Perspective_ZToDepthValue(const hloat* __restrict pMatrix,hloat zEye) {
-    // Warning: this function might be WRONG! Use it at your own risk!
-    // zEye in [n,f]
+    // zEye in [n,f] n,f positive
     // returns non-linearized depthValue in [0,1]
-    return (pMatrix[14]/zEye + pMatrix[10] - (hloat)1.0)*(hloat)(-0.5);
+    const hloat rv = (-pMatrix[10]+pMatrix[14]/zEye   +(hloat)1.0)*(hloat)0.5;
+    // NDC: [-1,1] To [0,1] => (x + 1.0) * 0.5
+    return rv<0 ? 0 : rv>1 ? 1 : rv;    // Otherwise it can return values slightly less than zero or slightly bigger than one.
 }
 static __inline hloat Helper_Ortho_DepthValueToZ(const hloat* __restrict pMatrix,hloat depthValue) {
     // Warning: this function might be WRONG! Use it at your own risk!
     // depthValue in [0,1]
-    // returns zEye in [n,f]
-    return ((hloat)2.0*depthValue-(hloat)1.0-pMatrix[14])/pMatrix[10];
+    // returns zEye in [n,f] n,f positive
+    //if (depthValue>(hloat)0.99999) depthValue-=(hloat) 0.00001;    // Otherwise result can be slightly bigger than f
+    return -((hloat)2.0*depthValue-(hloat)1.0-pMatrix[14])/pMatrix[10];
 }
 static __inline hloat Helper_Ortho_ZToDepthValue(const hloat* __restrict pMatrix,hloat zEye) {
     // Warning: this function might be WRONG! Use it at your own risk!
-    // zEye in [n,f]
+    // zEye in [n,f] n,f positive
     // returns depthValue in [0,1]
-    return (zEye*pMatrix[10]+pMatrix[14]+(hloat)1.0)*(hloat)0.5;
+    const hloat rv =  (-zEye*pMatrix[10]+pMatrix[14]+(hloat)1.0)*(hloat)0.5;
+    return rv<0 ? 0 : rv>1 ? 1 : rv;    // Otherwise it can return values slightly less than zero or slightly bigger than one.
 }
 static __inline int Helper_InvertMatrix(hloat* __restrict mOut16,const hloat* __restrict m16)	{
     const hloat* m = m16;
