@@ -361,18 +361,15 @@ static const char* DofPassFragmentShader[] = {
     "\n"
     "varying vec2 v_uv;\n"
     "\n"
-    "const vec3 weights[6] = vec3[6](vec3(0.0, 0.0, 1.0),vec3(0.25, 0.0, 1.5),vec3(0.5, 0.25, 2.5),vec3(0.75, 0.5, 3.5),vec3(0.9, 0.75, 4.3),vec3(1.0, 1.0, 5.0));\n"
+    "// It must be: 2.0*weights[].x+2.0*weights[].y+1.0*weights[].z = 1.0; \n"
+    "const vec3 weights[6] = vec3[6](vec3(0.0, 0.0, 1.0),vec3(0.0, 0.15, 0.7),vec3(0.15, 0.2, 0.3),vec3(0.2, 0.2, 0.2),vec3(0.25, 0.15, 0.2),vec3(0.3, 0.15, 0.1));\n"
     "\n"
-    "   vec3 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction,float blurSpread,float weightSpread) {\n"
-    "       vec2 off = (direction/resolution)*floor(blurSpread);\n"
-    "       vec3 weight = weights[int(min(floor(weightSpread),5.0))];\n"
-    "       vec3 color = vec3(0.0);\n"
-    "       color+=weight.y*texture2D(image, uv+vec2(-2.0*off.x,-2.0*off.y)).rgb;\n"
-    "       color+=weight.x*texture2D(image, uv+vec2(-1.0*off.x,-1.0*off.y)).rgb;\n"
-    "       color+=1.0*texture2D(image, uv).rgb;\n"
-    "       color+=weight.x*texture2D(image, uv+vec2(1.0*off.x,1.0*off.y)).rgb;\n"
-    "       color+=weight.y*texture2D(image, uv+vec2(2.0*off.x,2.0*off.y)).rgb;\n"
-    "       color/=weight.z;\n"
+    "   vec3 blur(sampler2D image,vec2 uv,vec2 resolution,vec2 direction,float floorBlurSpread,float floorWeightSpread) {\n"
+    "       vec2 off = (direction/resolution)*floorBlurSpread;\n"
+    "       vec3 weight = weights[int(min(floorWeightSpread,5.0))];\n"
+    "       vec3 color= weight.x*(texture2D(image, uv+vec2(-2.0*off.x,-2.0*off.y)).rgb+texture2D(image, uv+vec2(2.0*off.x,2.0*off.y)).rgb) + \n"
+    "                   weight.y*(texture2D(image, uv+vec2(-1.0*off.x,-1.0*off.y)).rgb+texture2D(image, uv+vec2(1.0*off.x,1.0*off.y)).rgb) + \n"
+    "                   weight.z*texture2D(image, uv).rgb;\n"
     "       return color;\n"
     "   }\n"
     "\n"
@@ -389,8 +386,9 @@ static const char* DofPassFragmentShader[] = {
     "   float depthDifferenceSign = sign(depthDifference);\n"       // Used below to boost blur in perspective-camera foreground objects only (not needed in ortho mode)
     "   depthDifference = depthDifference*depthDifferenceSign;\n"   // == abs(depthDifference) [depthDifferenceSign<0 for foreground objects only]
     "   float foregroundObjectsBlurBoost = u_linearizeDepthConstants.w+(1.0-u_linearizeDepthConstants.w)*(2.0-1.0*depthDifferenceSign);\n"  // Last added can be boosted this way: (4.0-3.0*depthDifferenceSign) [The difference must be 1.0 regardless of depthDifferenceSign]
-    "   float blurAmount = max(depthDifference*foregroundObjectsBlurBoost*u_dofBlurClampAndBias.z - u_dofBlurClampAndBias.y, 0.0);\n"  // The intent is to leave a DeltaZ around u_focusDepthValue (based on u_dofBlurClampAndBias.y), with no blur at all.
-    "   blurAmount = min(blurAmount,u_dofBlurClampAndBias.x);\n"    // u_dofBlurClampAndBias.z is the blur power, and u_dofBlurClampAndBias.x is the blur maximum value
+    "   float blurAmount = max(depthDifference - u_dofBlurClampAndBias.y, 0.0);\n"  // The intent is to leave a DeltaZ around u_focusDepthValue (based on u_dofBlurClampAndBias.y), with no blur at all.
+    "   blurAmount = min(blurAmount*foregroundObjectsBlurBoost*u_dofBlurClampAndBias.z,u_dofBlurClampAndBias.x);\n"    // u_dofBlurClampAndBias.z is the blur power, and u_dofBlurClampAndBias.x is the blur maximum value
+    "   blurAmount = floor(blurAmount);\n"
     "   gl_FragColor = vec4(blur(u_sampler,v_uv,u_resolution.xy,u_direction,blurAmount,blurAmount),1.0);\n" // Here we reuse blurAmount twice (for both blur radius and (weight) power), but maybe there's a better way to set these values
     "\n"
     "   //gl_FragColor = vec4(depth,depth,depth,1);\n"  // This looks OK for both perspective and ortho AFAICS (so that LinearizeDepth(...) seems to be correct)
@@ -433,7 +431,7 @@ void InitDofPass(DofPass* sp,int width,int height,int skip_creating_program)	{
         glUniform1i(sp->uniform_location_depthSampler,1);
         glUniform2f(sp->uniform_location_resolution,width,height);
         glUniform2f(sp->uniform_location_direction,1.0f,0.0f);
-        glUniform3f(sp->uniform_location_dofBlurClampAndBias,3.0f,0.025f,7.5f); // .y in (0,1)... but these values are too difficult to tweak
+        glUniform3f(sp->uniform_location_dofBlurClampAndBias,2.5f,0.05f,9.f); // .y in (0,1)... but these values are too difficult to tweak
         glUniform1f(sp->uniform_location_focusDepthValue,0.5f);
         if (config.use_camera_ortho3d_projection_matrix)
             glUniform4f(sp->uniform_location_linearizeDepthConstants,0.f,pMatrixFarPlane,pMatrixFarPlane-pMatrixNearPlane,1.f);
