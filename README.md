@@ -28,6 +28,7 @@ The demos: shadow_mapping_sESM1.c, variance_shadow_mapping.c, variance_shadow_ma
 ![shadow_mapping_cascade.c](./screenshots/shadow_mapping_cascade.png)
 ![shadow_mapping_cascade_advanced.c](./screenshots/shadow_mapping_cascade_advanced.png)
 ![shadow_mapping_cascade_texture_array.c](./screenshots/shadow_mapping_cascade_texture_array.png)
+![shadow_mapping_cascade_horizontal_and_vertical.c](./screenshots/shadow_mapping_cascade_horizontal_and_vertical.png)
 ![shadow_mapping_pcf.c](./screenshots/shadow_mapping_pcf.png)
 ![variance_shadow_mapping.c](./screenshots/variance_shadow_mapping.png)
 ![variance_shadow_mapping_MSM4.c](./screenshots/variance_shadow_mapping_MSM4.png)

@@ -52,9 +52,12 @@ Mkfile.old
 dkms.conf
 
 *.pro
+*.user
 *.sh
 *.ini
 *.autosave
+*.qmake.stash
+*.stash
 code/
 code
 reps/
@@ -62,6 +65,8 @@ shadow_mapping
 shadow_mapping_advanced
 shadow_mapping_pcf
 shadow_mapping_cascade
+shadow_mapping_cascade_horizontal
+shadow_mapping_cascade_horizontal_and_vertical
 shadow_mapping_cascade_advanced
 shadow_mapping_cascade_texture_array
 shadow_mapping_sESM
@@ -103,6 +108,7 @@ Tests/test_sdf
 glImmediateMode.h
 obj.h
 Sdf/
+screenshots/frustum_section_radius.png
 
 
 

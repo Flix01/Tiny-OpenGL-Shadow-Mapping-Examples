@@ -29,7 +29,7 @@
 // HOW TO COMPILE:
 /*
 // LINUX:
-gcc -O2 -std=gnu89 variance_shadow_mapping_EVSM2.c -o variance_shadow_mapping_EVSM2 -I"../" -lglut -lGL -lX11 -lm
+gcc -O2 -std=gnu89 -no-pie variance_shadow_mapping_EVSM2.c -o variance_shadow_mapping_EVSM2 -I"../" -lglut -lGL -lX11 -lm
 // WINDOWS (here we use the static version of glew, and glut32.lib, that can be replaced by freeglut.lib):
 cl /O2 /MT /Tc variance_shadow_mapping_EVSM2.c /D"GLEW_STATIC" /I"../" /link /out:variance_shadow_mapping_EVSM2.exe glut32.lib glew32s.lib opengl32.lib gdi32.lib Shell32.lib comdlg32.lib user32.lib kernel32.lib
 

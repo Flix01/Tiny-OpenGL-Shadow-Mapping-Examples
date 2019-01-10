@@ -472,13 +472,15 @@ static __inline void Helper_GetLightViewProjectionMatrixExtra(hloat* __restrict 
     hloat frustumCenter[3] = {0,0,0};hloat radius = 0;
     hloat lpMatrix[16],lvMatrix[16],lvpMatrixFallback[16];
     int i;
+
+    hloat frustumCenterDistance,tanFovDiagonalSquared;
+    const hloat halfNearFarClippingPlane = 0.5*(cameraFarClippingPlane+cameraNearClippingPlane);
+
     if (lvpMatrixOut16==0) lvpMatrixOut16=lvpMatrixFallback;    // AFAIK from the caller point of view it's still lvpMatrixOut16==0, isn't it?
     if (cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero>cameraFarClippingPlane) cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero = 0;  // Not needed
 
     // Get frustumCenter and radius
-    hloat frustumCenterDistance;
-    hloat tanFovDiagonalSquared = tan(cameraFovyDeg*3.14159265358979323846/360.0); // At this point this is just TANFOVY
-    const hloat halfNearFarClippingPlane = 0.5*(cameraFarClippingPlane+cameraNearClippingPlane);
+    tanFovDiagonalSquared = tan(cameraFovyDeg*3.14159265358979323846/360.0); // At this point this is just TANFOVY
     if (cameraTargetDistanceForUnstableOrtho3DModeOnly_or_zero<=0)  {
         // camera perspective mode here
         tanFovDiagonalSquared*=tanFovDiagonalSquared;
@@ -686,11 +688,13 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
     const hloat cameraPosition3[3] = {cameraVMatrixInverse16[12],cameraVMatrixInverse16[13],cameraVMatrixInverse16[14]};
     const hloat cameraForwardDirection3[3] = {-cameraVMatrixInverse16[8],-cameraVMatrixInverse16[9],-cameraVMatrixInverse16[10]};
     int cascadeIterator,i;
+
+    hloat tanFovDiagonalSquared,ortho3dRadiusXYSquared=0;
+    //hloat maxRadius = 0.f;
+
     if (cameraTargetDistanceForOrtho3DModeOnly_or_zero>cascadeNearAndFarPlanesArray[numCascades]) cameraTargetDistanceForOrtho3DModeOnly_or_zero = 0;  // Not needed
 
-    hloat tanFovDiagonalSquared = tan(cameraFovyDeg*3.14159265358979323846/360.0); // At this point this is just TANFOVY
-    hloat ortho3dRadiusXYSquared=0;
-    //hloat maxRadius = 0.f;
+    tanFovDiagonalSquared = tan(cameraFovyDeg*3.14159265358979323846/360.0); // At this point this is just TANFOVY
     if (cameraTargetDistanceForOrtho3DModeOnly_or_zero<=0)   {
         // camera perspective mode here
         tanFovDiagonalSquared*=tanFovDiagonalSquared;
@@ -823,6 +827,7 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
             }
 
             if (optionalLVPMatrixForFrustumCullingUsageArrayOut)   {
+                hloat* plvpMatrixForFrustumCullingOut = NULL;
                 const int attemptToFixSwimming = (lvpMatricesOut16==0) ? 1 : 0;   // Only if we don't want lvpMatricesOut16
                 float minmaxXY[4]={minVal[0]*radius,maxVal[0]*radius,minVal[1]*radius,maxVal[1]*radius};
                 if (attemptToFixSwimming && texelIncrement>0)   {
@@ -833,7 +838,7 @@ static __inline  void Helper_GetLightViewProjectionMatricesExtra(hloat* __restri
                         else                minmaxXY[i] = -ceil(-minmaxXY[i]/texelIncrement)*texelIncrement;
                     }
                 }
-                hloat* plvpMatrixForFrustumCullingOut = &optionalLVPMatrixForFrustumCullingUsageArrayOut[cascadeIterator*16];
+                plvpMatrixForFrustumCullingOut = &optionalLVPMatrixForFrustumCullingUsageArrayOut[cascadeIterator*16];
                 Helper_Ortho(plvpMatrixForFrustumCullingOut,
                         minmaxXY[0],minmaxXY[1],
                         minmaxXY[2],minmaxXY[3],
@@ -868,6 +873,187 @@ static __inline  void Helper_GetLightViewProjectionMatrices(hloat* __restrict lv
                                                           hloat cameraFovyDeg,hloat cameraAspectRatio,hloat cameraTargetDistanceForOrtho3DModeOnly_or_zero,
                                                           const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement) {
     Helper_GetLightViewProjectionMatricesExtra(lvpMatricesOut16,cascadeNearAndFarPlanesArray,numCascades,cameraVMatrixInverse16,cameraFovyDeg,cameraAspectRatio,cameraTargetDistanceForOrtho3DModeOnly_or_zero,normalizedLightDirection3,texelIncrement,0,0,0,0,0,0);
+}
+
+
+static __inline  void Helper_GetLightViewProjectionMatricesHorizontal(hloat* __restrict lvpMatrixRightOut16,hloat* __restrict lvpMatrixLeftOut16,hloat cameraNearPlane,hloat cameraFarPlane,
+                                                                      const hloat* __restrict cameraVMatrixInverse16,
+                                                                      hloat cameraFovyDeg,hloat cameraAspectRatio,hloat cameraTargetDistanceForOrtho3DModeOnly_or_zero,
+                                                                      const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement)
+{
+    /* Experimental:
+    // TODO: caculation of semi-frustum center and radius is WRONG! (And it's MUST be correct to have acceptable shadow-resolution).
+    // TODO: 'cameraTargetDistanceForOrtho3DModeOnly_or_zero' is currently not used. Use it.
+    // TODO: add the ..Extra(...) version with 'optionalLightViewportClippingArrayOut','optionalCameraFrustumPointsInNDCLightSpaceArrayOut','optionalLVPMatrixForFrustumCullingUsageArrayOut'
+        (not so trivial because we need to caculate the frustum points for each side of the camera frustum).
+    */
+    const hloat cameraPosition3[3] = {cameraVMatrixInverse16[12],cameraVMatrixInverse16[13],cameraVMatrixInverse16[14]};
+    const hloat cameraRightDirection3[3] = {cameraVMatrixInverse16[0],cameraVMatrixInverse16[1],cameraVMatrixInverse16[2]};
+    const hloat cameraUpDirection3[3] = {cameraVMatrixInverse16[4],cameraVMatrixInverse16[5],cameraVMatrixInverse16[6]};
+    const hloat cameraForwardDirection3[3] = {-cameraVMatrixInverse16[8],-cameraVMatrixInverse16[9],-cameraVMatrixInverse16[10]};
+    int i;
+
+    // (wrong) calculation of the 2 (half-frustum) centers and bounding radii:
+    hloat tanFovY = tan(cameraFovyDeg*3.14159265358979323846/360.0);
+    hloat tanFovYSquared = tanFovY*tanFovY;
+    hloat tanFovX = tanFovY*cameraAspectRatio;
+    hloat tanFovXSquared = tanFovX*tanFovX;
+
+    const hloat f = cameraFarPlane, n = cameraNearPlane, fSquared = f*f, nSquared = n*n;
+    hloat C[3]={tanFovX*f*0.5,0,(tanFovYSquared*(fSquared-nSquared)+fSquared)/(2.0*f+2.0*tanFovYSquared*(f-n))};    // eye space of the right center
+    hloat radius,frustumCenterRight[3],frustumCenterLeft[3];
+
+    hloat lpMatrix[16],lvMatrix[16];
+
+
+    if (C[2]>f) C[2]=f;
+    radius = (tanFovXSquared*fSquared*0.25) + (tanFovY*C[2]) + (fSquared-C[2]*C[2]);
+    radius = sqrt(radius);
+
+    //radius*=0.75;   // empiric value (calculated radius was too big: well no. It must be tested with a very big aspect-ratio)
+
+    for (i=0;i<3;i++) frustumCenterRight[i] = cameraPosition3[i]+cameraRightDirection3[i]*C[0]+cameraUpDirection3[i]*C[1]+cameraForwardDirection3[i]*C[2];
+    for (i=0;i<3;i++) frustumCenterLeft[i] = cameraPosition3[i]-cameraRightDirection3[i]*C[0]+cameraUpDirection3[i]*C[1]+cameraForwardDirection3[i]*C[2];
+    //fprintf(stderr,"cascade[%d] radius=%1.4f frustumCenterDistance=%1.4f nearPlane=%1.4f farPlane = %1.4f fovy = %1.0f cameraAspectRatio = %1.3f\n",cascadeIterator,radius,frustumCenterDistance,frustumNearClippingPlane,frustumFarClippingPlane,cameraFovyDeg,cameraAspectRatio);
+
+    // Shadow swimming happens when: 1) camera translates; 2) camera rotates; 3) objects move or rotate
+    // AFAIK Shadow swimming (3) can't be fixed in any way
+    if (texelIncrement>0)   radius = ceil(radius/texelIncrement)*texelIncrement;      // This 'should' fix Shadow swimming (1)  [Not sure code is correct!]
+    //if (cascadeIterator == numCascades-1) maxRadius = radius;
+
+    // Get light matrices
+    Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,0.0,-2.0*radius); // maybe here we can use farVal (last arg) as radius (or maxRadius).
+    Helper_LookAt(lvMatrix,
+                  frustumCenterRight[0]-normalizedLightDirection3[0]*radius,    // eye[0]
+            frustumCenterRight[1]-normalizedLightDirection3[1]*radius,    // eye[1]
+            frustumCenterRight[2]-normalizedLightDirection3[2]*radius,    // eye[2]
+            frustumCenterRight[0],frustumCenterRight[1],frustumCenterRight[2],      // target
+            0,1,0                                                    // up
+            );
+    // Get output
+    Helper_MultMatrix(lvpMatrixRightOut16,lpMatrix,lvMatrix);
+
+    Helper_LookAt(lvMatrix,
+                  frustumCenterLeft[0]-normalizedLightDirection3[0]*radius,    // eye[0]
+            frustumCenterLeft[1]-normalizedLightDirection3[1]*radius,    // eye[1]
+            frustumCenterLeft[2]-normalizedLightDirection3[2]*radius,    // eye[2]
+            frustumCenterLeft[0],frustumCenterLeft[1],frustumCenterLeft[2],      // target
+            0,1,0                                                    // up
+            );
+    // Get output
+    Helper_MultMatrix(lvpMatrixLeftOut16,lpMatrix,lvMatrix);
+
+    // This 'should' fix Shadow swimming (2) [Not sure code is correct!]
+    if (texelIncrement>0)   {
+        int mi;
+        for (mi=0;mi<2;mi++)   {
+            hloat *lvpMatrixOut16 = mi==0 ? lvpMatrixRightOut16 : lvpMatrixLeftOut16;
+
+            hloat shadowOrigin[4]   = {0,0,0,1};
+            hloat roundedOrigin[4]  = {0,0,0,0};
+            hloat roundOffset[4]    = {0,0,0,0};
+            hloat texelCoefficient = texelIncrement*2.0;
+            Helper_MatrixMulPos(lvpMatrixOut16,shadowOrigin,shadowOrigin[0],shadowOrigin[1],shadowOrigin[2]);    // Or MultDir ?
+            for (i = 0; i < 2; i++) {// Or i<3 ?
+                shadowOrigin[i]/= texelCoefficient;
+                roundedOrigin[i] = Helper_Round(shadowOrigin[i]);
+                roundOffset[i] = roundedOrigin[i] - shadowOrigin[i];
+                roundOffset[i]*=  texelCoefficient;
+            }
+            lvpMatrixOut16[12]+= roundOffset[0];
+            lvpMatrixOut16[13]+= roundOffset[1];
+        }
+    }
+}
+
+static __inline  void Helper_GetLightViewProjectionMatricesHorizontalAndVertical(hloat* __restrict lvpMatricesOut64,hloat cameraNearPlane,hloat cameraFarPlane,
+                                                                      const hloat* __restrict cameraVMatrixInverse16,
+                                                                      hloat cameraFovyDeg,hloat cameraAspectRatio,
+                                                                      const hloat*  __restrict normalizedLightDirection3, hloat texelIncrement)
+{
+    /* Experimental:
+    // TODO: add 'cameraTargetDistanceForOrtho3DModeOnly_or_zero' if it's useful.
+    // TODO: add the ..Extra(...) version with 'optionalLightViewportClippingArrayOut','optionalCameraFrustumPointsInNDCLightSpaceArrayOut','optionalLVPMatrixForFrustumCullingUsageArrayOut'
+        (not so trivial because we need to caculate the frustum points for each of the 4 sections of the camera frustum).
+    */
+    const hloat cameraPosition3[3] = {cameraVMatrixInverse16[12],cameraVMatrixInverse16[13],cameraVMatrixInverse16[14]};
+    const hloat cameraRightDirection3[3] = {cameraVMatrixInverse16[0],cameraVMatrixInverse16[1],cameraVMatrixInverse16[2]};
+    const hloat cameraUpDirection3[3] = {cameraVMatrixInverse16[4],cameraVMatrixInverse16[5],cameraVMatrixInverse16[6]};
+    const hloat cameraForwardDirection3[3] = {-cameraVMatrixInverse16[8],-cameraVMatrixInverse16[9],-cameraVMatrixInverse16[10]};
+    const hloat halfNearFarClippingPlane = 0.5*(cameraFarPlane+cameraNearPlane);
+    int cascadeIterator,i;
+
+    hloat tanFovY,tanFovX,tanFovD;
+    hloat halfNearFarClippingPlaneX,halfNearFarClippingPlaneY,halfNearFarClippingPlaneD;
+    hloat radius = 0;
+
+    if  (!lvpMatricesOut64) return;
+
+    tanFovY = tan(cameraFovyDeg*3.14159265358979323846/360.0);
+    tanFovX = cameraAspectRatio*tanFovY;
+    tanFovD = sqrt(tanFovY*tanFovY+tanFovX*tanFovX);
+
+    // get frustumCenter and radius (in camera space for the positive (plus-plus) frustum quadrant for now)
+
+    // we want to use the image at 'screenshots/frustum_radius.png' (not sure it's correct).
+    // Basically the center point is at (Z: halfNearFarClippingPlane, D: tanFovDiagonal*cameraFarPlane*0.5),
+    // so that its distances from 3 frustum-section points (of the 4 in the frustum diagonal section) are the same.
+    halfNearFarClippingPlaneD = tanFovD*cameraFarPlane*0.5;
+    radius = sqrt(halfNearFarClippingPlaneD*halfNearFarClippingPlaneD + (cameraFarPlane-halfNearFarClippingPlane)*(cameraFarPlane-halfNearFarClippingPlane));
+
+    // Main problem here is that now we must find the 2 components of 'halfNearFarClippingPlaneD' in X and Y...
+    // Is this correct?
+    halfNearFarClippingPlaneY = halfNearFarClippingPlaneD*tanFovY/tanFovD;
+    halfNearFarClippingPlaneX = halfNearFarClippingPlaneD*tanFovX/tanFovD;
+
+    // Shadow swimming happens when: 1) camera translates; 2) camera rotates; 3) objects move or rotate
+    // AFAIK Shadow swimming (3) can't be fixed in any way
+    if (texelIncrement>0)   radius = ceil(radius/texelIncrement)*texelIncrement;      // This 'should' fix Shadow swimming (1)  [Not sure code is correct!]
+
+
+    for (cascadeIterator = 0; cascadeIterator < 4; cascadeIterator++) {
+        // cascadeIterator: 0={left-bottom}, 1={right-bottom}, 2={left-top}, 3={right-top}
+        hloat frustumCenter[3] = {0,0,0};
+        hloat lpMatrix[16],lvMatrix[16];
+        hloat* lvpMatrixOut16 = &lvpMatricesOut64[16*cascadeIterator];
+        const int right = cascadeIterator%2;
+        const int top = cascadeIterator/2;
+
+        for (i=0;i<3;i++) frustumCenter[i] = cameraPosition3[i]+
+                (right?cameraRightDirection3[i]:-cameraRightDirection3[i])  *halfNearFarClippingPlaneX+
+                (top?cameraUpDirection3[i]:-cameraUpDirection3[i])          *halfNearFarClippingPlaneY+
+                cameraForwardDirection3[i]*halfNearFarClippingPlane;
+
+
+        // Get light matrices
+        Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,0.0,-2.0*radius); // maybe here we can use farVal (last arg) as radius (or maxRadius).
+        Helper_LookAt(lvMatrix,
+                      frustumCenter[0]-normalizedLightDirection3[0]*radius,    // eye[0]
+                frustumCenter[1]-normalizedLightDirection3[1]*radius,    // eye[1]
+                frustumCenter[2]-normalizedLightDirection3[2]*radius,    // eye[2]
+                frustumCenter[0],frustumCenter[1],frustumCenter[2],      // target
+                0,1,0                                                    // up
+                );
+        // Get output
+        Helper_MultMatrix(lvpMatrixOut16,lpMatrix,lvMatrix);
+
+        // This 'should' fix Shadow swimming (2) [Not sure code is correct!]
+        if (texelIncrement>0)   {
+            hloat shadowOrigin[4]   = {0,0,0,1};
+            hloat roundedOrigin[4]  = {0,0,0,0};
+            hloat roundOffset[4]    = {0,0,0,0};
+            hloat texelCoefficient = texelIncrement*2.0;
+            Helper_MatrixMulPos(lvpMatrixOut16,shadowOrigin,shadowOrigin[0],shadowOrigin[1],shadowOrigin[2]);    // Or MultDir ?
+            for (i = 0; i < 2; i++) {// Or i<3 ?
+                shadowOrigin[i]/= texelCoefficient;
+                roundedOrigin[i] = Helper_Round(shadowOrigin[i]);
+                roundOffset[i] = roundedOrigin[i] - shadowOrigin[i];
+                roundOffset[i]*=  texelCoefficient;
+            }
+            lvpMatrixOut16[12]+= roundOffset[0];
+            lvpMatrixOut16[13]+= roundOffset[1];
+        }
+    }
 }
 
 static __inline void Helper_Min3(hloat* __restrict res3,const hloat* a3,const hloat* b3) {
