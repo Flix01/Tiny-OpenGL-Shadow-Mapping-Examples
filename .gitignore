@@ -63,6 +63,7 @@ code
 reps/
 shadow_mapping
 shadow_mapping_advanced
+shadow_mapping_bidimensional_texture
 shadow_mapping_pcf
 shadow_mapping_cascade
 shadow_mapping_cascade_horizontal
