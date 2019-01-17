@@ -80,6 +80,7 @@ for glut.h, glew.h, etc. with something like:
         -> try making shadows lighter (this hint helps with ANY shadow mapping artifact).
         -> just increase the shadow resolution, keeping the same ratio between SHADOW_MAP_WIDTH and SHADOW_MAP_HEIGHT (use non-power-of-two textures if supported).
         -> try combining this demo with 'shadow_mapping_pcf.c' (or with other shadow smoothing techniques) and see if things improve.
+        -> read the NOTE below and try and see if SHADOW_MAP_WIDTH<SHADOW_MAP_HEIGHT if better for your frustum.
        The problem is that popping artifacts appear only on specific angles of 45 degrees: so if the camera forward direction
        is close to any of these angles, popping artifacts are more frequent.
 
@@ -88,6 +89,9 @@ for glut.h, glew.h, etc. with something like:
        'Bidirectional Unstable Shadow Mapping (without popping artifacts)' ?
     A) I personally prefer 'Bidirectional Stable Shadow Mapping with popping artifacts'.
 
+    NOTE:
+    -> For some particular camera frustum configurations, we might prefer the opposite effect:
+       it should be easily done using SHADOW_MAP_WIDTH<SHADOW_MAP_HEIGHT.
 */
 
 #define PROGRAM_NAME "shadow_mapping_bidimensional_texture"
