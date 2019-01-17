@@ -1070,9 +1070,10 @@ static __inline void Helper_GetLightViewProjectionMatrixTextureWidthAlignedExtra
     const hloat cameraPosition3[3] = {cameraVMatrixInverse16[12],cameraVMatrixInverse16[13],cameraVMatrixInverse16[14]};
     const hloat cameraForwardDirection3[3] = {-cameraVMatrixInverse16[8],-cameraVMatrixInverse16[9],-cameraVMatrixInverse16[10]};
     const hloat cameraLeftDirection3[3] = {-cameraVMatrixInverse16[0],-cameraVMatrixInverse16[1],-cameraVMatrixInverse16[2]};
+    const hloat cameraUpDirection3[3] = {cameraVMatrixInverse16[4],cameraVMatrixInverse16[5],cameraVMatrixInverse16[6]};
     hloat frustumCenter[3] = {0,0,0};hloat radius = 0;
     hloat lpMatrix[16],lvMatrix[16],lvpMatrixFallback[16];
-    hloat absDotCameraDirectionShadowDirection = 0, lightUpVector3[3]={0,1,0};
+    hloat dotCameraXDirectionLightDirection = 0, lightUpVector3[3]={0,1,0};
     int i;
 
     hloat frustumCenterDistance,tanFovDiagonalSquared;
@@ -1117,8 +1118,34 @@ static __inline void Helper_GetLightViewProjectionMatrixTextureWidthAlignedExtra
 
     // Get light matrices
     Helper_Ortho(lpMatrix,-radius,radius,-radius,radius,0,-2.0*radius);
-    absDotCameraDirectionShadowDirection = fabsf(Helper_Vector3Dot(cameraLeftDirection3,normalizedLightDirection3));
-    if (absDotCameraDirectionShadowDirection>0.5) {lightUpVector3[0]=0;lightUpVector3[1]=0;lightUpVector3[2]=1;}
+    if (lvpMatrixOut16!=lvpMatrixFallback)  {
+        // User wants stable shadow mapping... (with popping artifacts)
+
+        // Good (stable with popping artifacts)
+        dotCameraXDirectionLightDirection = fabsf(Helper_Vector3Dot(cameraLeftDirection3,normalizedLightDirection3));
+        if (dotCameraXDirectionLightDirection>0.5) {lightUpVector3[0]=0;lightUpVector3[1]=0;lightUpVector3[2]=1;}
+    }
+    else {
+        // User wants unstable shadow mapping
+
+        /* // Good (unstable without popping)
+        dotCameraXDirectionLightDirection = Helper_Vector3Dot(cameraLeftDirection3,normalizedLightDirection3);
+        lightUpVector3[0]=0;
+        lightUpVector3[2]=dotCameraXDirectionLightDirection;
+        lightUpVector3[1]=sqrt(1.0-dotCameraXDirectionLightDirection*dotCameraXDirectionLightDirection);
+        */
+        // Smoother (unstable without popping)
+        Helper_Vector3Cross(lightUpVector3,cameraLeftDirection3,normalizedLightDirection3);
+        /* // Unfinished attempt.
+        {
+            hloat tmp[3],tmp2[3];
+            // Let's find 'tmp2', the projection of 'normalizedLightDirection3' on the camera plane XY:
+            Helper_Vector3Cross(tmp,normalizedLightDirection3,cameraForwardDirection3);
+            Helper_Vector3Cross(tmp2,cameraForwardDirection3,tmp);
+        }
+        */
+    }
+
     Helper_LookAt(lvMatrix,
             frustumCenter[0]-normalizedLightDirection3[0]*radius,   // eye[0]
             frustumCenter[1]-normalizedLightDirection3[1]*radius,   // eye[1]

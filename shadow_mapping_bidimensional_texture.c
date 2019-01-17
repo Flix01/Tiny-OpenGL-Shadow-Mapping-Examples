@@ -56,13 +56,38 @@ for glut.h, glew.h, etc. with something like:
     -> When USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is NOT defined, a shadow resolution pop when the camera or the light rotates.
        At these singularity-points there a swapping between the (shadow) texture W and H.
     -> When USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is defined, the shadow resolution becomes much better (as usual),
-       but the popping is still noticable.
+       but the popping is still noticable (FIXED. Please read the UPDATE section below).
 
     Was this experiment useful?
     -> It might be a cheap alternative to (depth) cascaded shadow maps, except that we got the above drawbacks.
+       Cascaded shadow maps are expensive because (on most systems) you have to draw shadows N times: one time
+       per cascade (potentially performing N shadow frustum culling steps).
 
     Further future improvements?
     -> See if we can find a way to reduce the 'popping artifacts' (maybe introducing a zone where a small amount of 'shadow swimming' is allowed and exploiting symmetry in rotations).
+
+    UPDATE: I've removed popping ONLY when USE_UNSTABLE_SHADOW_MAPPING_TECHNIQUE is defined.
+    However I have the impression that this new 'rotation smoothness' algorithm is not 100% correct
+    (the texture is a bit less 'bidirectional', expecially when the light rotates).
+    Please see the implementation of Helper_GetLightViewProjectionMatrixTextureWidthAlignedExtra(...) in
+    "helper_functions.h" for further info.
+
+    So now the only remaining problem is:
+    Q) I want to use 'Stable Shadow Mapping'. How can I remove popping artifacts?
+    A) Good question, but AFAIK you can't (well, unless we introduce a 'serious amount' of shadow swimming; but we don't cover this part).
+       Some obvious hints to alleviate popping artifacts are:
+        -> reduce the ratio between SHADOW_MAP_WIDTH and SHADOW_MAP_HEIGHT (use non-power-of-two textures if supported).
+        -> try making shadows lighter (this hint helps with ANY shadow mapping artifact).
+        -> just increase the shadow resolution, keeping the same ratio between SHADOW_MAP_WIDTH and SHADOW_MAP_HEIGHT (use non-power-of-two textures if supported).
+        -> try combining this demo with 'shadow_mapping_pcf.c' (or with other shadow smoothing techniques) and see if things improve.
+       The problem is that popping artifacts appear only on specific angles of 45 degrees: so if the camera forward direction
+       is close to any of these angles, popping artifacts are more frequent.
+
+    Another question is:
+    Q) Is it better 'Bidirectional Stable Shadow Mapping with popping artifacts' or
+       'Bidirectional Unstable Shadow Mapping (without popping artifacts)' ?
+    A) I personally prefer 'Bidirectional Stable Shadow Mapping with popping artifacts'.
+
 */
 
 #define PROGRAM_NAME "shadow_mapping_bidimensional_texture"
